@@ -19,19 +19,24 @@
  * Authors: Martina Capuzzo <capuzzom@dei.unipd.it>
  */
 
-#include "capacitor-energy-source.h"
-#include "lora-radio-energy-model.h"
+#include "ns3/capacitor-energy-source.h"
+#include "ns3/lora-radio-energy-model.h"
+#include "ns3/variable-energy-harvester.h"
 #include "ns3/abort.h"
+#include "ns3/device-energy-model.h"
 #include "ns3/end-device-lora-phy.h"
 #include "ns3/log-macros-enabled.h"
 #include "ns3/log.h"
 #include "ns3/assert.h"
 #include "ns3/double.h"
+#include "ns3/object-base.h"
 #include "ns3/packet.h"
 #include "ns3/string.h"
 #include "ns3/trace-source-accessor.h"
+#include "ns3/pointer.h"
 #include "ns3/simulator.h"
-#include "src/core/model/string.h"
+#include "ns3/type-id.h"
+#include <bits/stdint-intn.h>
 #include <cmath>
 #include <fstream>
 #include <math.h>
@@ -55,12 +60,11 @@ CapacitorEnergySource::GetTypeId (void)
                          DoubleValue (0.01), // 10 mF
                          MakeDoubleAccessor (&CapacitorEnergySource::m_capacitance),
                          MakeDoubleChecker<double> ())
-          .AddAttribute ("CapacitorEnergySourceInitialVoltageV",
-                         "Initial voltage of the capacitor.",
-                         DoubleValue (0), // in Volt
-                         MakeDoubleAccessor (&CapacitorEnergySource::SetInitialVoltage,
-                                             &CapacitorEnergySource::GetInitialVoltage),
-                         MakeDoubleChecker<double> ())
+          .AddAttribute ("RandomInitialVoltage",
+                         "Random variable from which taking the initial voltage of the capacitor",
+                         StringValue ("ns3::UniformRandomVariable[Min=0.0|Max=0.0]"),
+                         MakePointerAccessor (&CapacitorEnergySource::m_initialVoltageRV),
+                         MakePointerChecker<RandomVariableStream> ())
           .AddAttribute ("CapacitorMaxSupplyVoltageV",
                          "Max Supply voltage for capacitor energy source.",
                          DoubleValue (3.3), // in Volts
@@ -85,8 +89,7 @@ CapacitorEnergySource::GetTypeId (void)
                                            &CapacitorEnergySource::GetUpdateInterval),
                          MakeTimeChecker ())
           .AddAttribute ("FilenameVoltageTracking",
-                         "Name of the output file where to save voltage values",
-                         StringValue (),
+                         "Name of the output file where to save voltage values", StringValue (),
                          MakeStringAccessor (&CapacitorEnergySource::m_filenameVoltageTracking),
                          MakeStringChecker ())
           .AddTraceSource ("RemainingEnergy", "Remaining energy at CapacitorEnergySource.",
@@ -101,8 +104,10 @@ CapacitorEnergySource::GetTypeId (void)
 CapacitorEnergySource::CapacitorEnergySource ()
 {
   NS_LOG_FUNCTION (this);
+  ObjectBase::ConstructSelf(AttributeConstructionList ());
   m_lastUpdateTime = Seconds (0.0);
   m_depleted = false;
+  SetInitialVoltage();
 }
 
 CapacitorEnergySource::~CapacitorEnergySource ()
@@ -110,49 +115,33 @@ CapacitorEnergySource::~CapacitorEnergySource ()
   NS_LOG_FUNCTION (this);
 }
 
-void
-CapacitorEnergySource::SetInitialVoltage (double initialVoltageV)
+TypeId
+CapacitorEnergySource::GetInstanceTypeId (void) const
 {
-  NS_LOG_FUNCTION (this << initialVoltageV);
-  NS_ASSERT (initialVoltageV >= 0);
+  return GetTypeId ();
+}
 
-  if (m_initialVoltageV> m_supplyVoltageV)
-    {
-      m_initialVoltageV= m_supplyVoltageV;
-    }
-  else
-    {
-      m_initialVoltageV = initialVoltageV;
-    }
-
-  m_actualVoltageV = m_initialVoltageV;
-  double initialEnergy = m_capacitance*pow(m_initialVoltageV, 2)/2;
-  m_remainingEnergyJ = initialEnergy;
-  NS_LOG_DEBUG ("Set initial voltage = " << m_initialVoltageV
-                << " V, remaining energy = " << initialEnergy);
+int64_t
+CapacitorEnergySource::AssignStreams(int64_t stream)
+{
+  NS_LOG_FUNCTION (this);
+  m_initialVoltageRV -> SetStream(stream);
+  return 1;
 }
 
 void
-CapacitorEnergySource::SetInitialEnergy (double initialEnergyJ)
+CapacitorEnergySource::SetInitialVoltage ()
 {
-  NS_LOG_FUNCTION (this << initialEnergyJ);
-  NS_ASSERT (initialEnergyJ >= 0);
-  double voltage = sqrt (2 * initialEnergyJ / m_capacitance);
-  if (voltage > m_supplyVoltageV)
-    {
-      m_initialVoltageV = m_supplyVoltageV;
-      m_remainingEnergyJ = m_capacitance* pow (m_initialVoltageV, 2) / 2;
-    }
-  else
-    {
-      m_remainingEnergyJ = initialEnergyJ;
-      m_initialVoltageV = voltage;
-    }
-  // m_remainingEnergyJ = initialEnergyJ;
-  // m_initialVoltageV = voltage;
-  m_actualVoltageV = m_initialVoltageV;
-  NS_LOG_DEBUG ("Set initial voltage = " << m_initialVoltageV << " V, remaining energy = "
-                                         << m_remainingEnergyJ << " J");
+  NS_LOG_FUNCTION (this);
+
+  m_actualVoltageV = m_initialVoltageRV->GetValue ();
+  NS_LOG_WARN ("Initial voltage: " << m_actualVoltageV << " V");
+  NS_ASSERT(m_actualVoltageV < m_supplyVoltageV);
+  m_initialVoltageV = m_actualVoltageV;
+  double initialEnergy = m_capacitance*pow(m_actualVoltageV, 2)/2;
+  m_remainingEnergyJ = initialEnergy;
+  NS_LOG_DEBUG ("Set initial voltage = " << m_actualVoltageV
+                << " V, remaining energy = " << initialEnergy);
 }
 
 void
@@ -203,7 +192,12 @@ CapacitorEnergySource::GetRemainingEnergy (void)
 {
   NS_LOG_FUNCTION (this);
   // update energy source to get the latest remaining energy.
-  UpdateEnergySource ();
+  if (!(Simulator::Now() == m_lastUpdateTime))
+    {
+      UpdateEnergySource ();
+    }
+
+  NS_LOG_DEBUG(m_remainingEnergyJ);
   return m_remainingEnergyJ;
 }
 
@@ -221,6 +215,11 @@ double
 CapacitorEnergySource::GetActualVoltage (void)
 {
   NS_LOG_FUNCTION (this);
+  if (Simulator::Now() != m_lastUpdateTime)
+  {
+    UpdateEnergySource ();
+  }
+
   return m_actualVoltageV;
 }
 
@@ -231,6 +230,15 @@ CapacitorEnergySource::GetVoltageFraction (void)
 
   UpdateEnergySource ();
   return m_actualVoltageV / m_initialVoltageV;
+}
+
+double
+CapacitorEnergySource::GetEnergyFromVoltage (double voltage)
+{
+  NS_LOG_DEBUG (this << " " << voltage);
+  double e = m_capacitance * pow (voltage, 2) / 2;
+  NS_LOG_DEBUG ("Computed energy " << e);
+  return e;
 }
 
 bool
@@ -244,31 +252,38 @@ void
 CapacitorEnergySource::UpdateEnergySource (void)
 {
   NS_LOG_FUNCTION (this);
-  NS_LOG_DEBUG ("CapacitorEnergySource: Updating remaining voltage.");
+  // NS_LOG_DEBUG ("CapacitorEnergySource: Updating remaining voltage. Depleted? " << m_depleted);
 
-    double actualVoltage = m_actualVoltageV;
+    double oldVoltage = m_actualVoltageV;
     UpdateVoltage ();
 
     m_lastUpdateTime = Simulator::Now ();
 
-    double eps = 1e-6;
-    // NS_LOG_DEBUG ("Vmin = " << m_lowVoltageTh * m_supplyVoltageV << "isdepleted? "
-    //                         << (m_actualVoltageV <=m_lowVoltageTh * m_supplyVoltageV + eps));
-    if (!m_depleted && m_actualVoltageV <= m_lowVoltageTh * m_supplyVoltageV + eps)
-      {
-        NS_LOG_DEBUG("Energy depleted");
-        m_depleted = true;
-        HandleEnergyDrainedEvent ();
-      }
-    else if (m_depleted && m_actualVoltageV > m_highVoltageTh * m_supplyVoltageV)
-      {
-        m_depleted = false;
-        HandleEnergyRechargedEvent ();
-      }
-    else if (m_actualVoltageV != actualVoltage)
-      {
-        NotifyEnergyChanged ();
-      }
+    double eps = 1e-9;
+    // NS_LOG_DEBUG ("Vmin = " << m_lowVoltageTh * m_supplyVoltageV << " actualV "
+    //               << (m_actualVoltageV) << " was depleted?" << m_depleted );
+      if (!m_depleted && m_actualVoltageV <= m_lowVoltageTh * m_supplyVoltageV + eps)
+        {
+          NS_LOG_DEBUG ("Energy depleted");
+          m_depleted = true;
+          HandleEnergyDrainedEvent ();
+        }
+      else if (m_depleted && m_actualVoltageV > m_highVoltageTh * m_supplyVoltageV)
+        {
+          NS_LOG_DEBUG ("Energy recharged");
+          m_depleted = false;
+          HandleEnergyRechargedEvent ();
+        }
+      else if (m_actualVoltageV != oldVoltage)
+        {
+          NS_LOG_DEBUG ("Energy changed - new voltage (V)=" << m_actualVoltageV);
+          HandleEnergyChangedEvent ();
+        }
+      else if (m_actualVoltageV == oldVoltage)
+        {
+          // NS_LOG_DEBUG ("Energy constant ");
+          HandleEnergyConstantEvent ();
+        }
 
     if (m_voltageUpdateEvent.IsExpired ())
       {
@@ -280,9 +295,6 @@ CapacitorEnergySource::UpdateEnergySource (void)
     // Track the value (also if it did not change)
     TrackVoltage();
 
-    // Update remaining energy
-    m_remainingEnergyJ = m_capacitance* pow (m_actualVoltageV, 2) / 2;
-    NS_LOG_DEBUG("[DEBUG] Update remaining energy= " << m_remainingEnergyJ);
 }
 
 double
@@ -291,7 +303,7 @@ CapacitorEnergySource::ComputeLoadEnergyConsumption (double Iload, double V0,
 {
   NS_LOG_FUNCTION(this << Iload << duration);
 
-  std::vector<double> r = GetResistances();
+  std::vector<double> r = GetResistances(Iload, GetHarvestersPower());
   double Rload = r.at(0);
   double ri = r.at(1);
   double Req = r.at(2);
@@ -330,7 +342,6 @@ void
 CapacitorEnergySource::HandleEnergyDrainedEvent (void)
 {
   NS_LOG_FUNCTION (this);
-  NS_LOG_DEBUG ("CapacitorEnergySource:Energy depleted!");
   NotifyEnergyDrained (); // notify DeviceEnergyModel objects
 }
 
@@ -338,57 +349,84 @@ void
 CapacitorEnergySource::HandleEnergyRechargedEvent (void)
 {
   NS_LOG_FUNCTION (this);
-  NS_LOG_DEBUG ("CapacitorEnergySource:Energy recharged!");
   NotifyEnergyRecharged (); // notify DeviceEnergyModel objects
 }
 
-  double
-  CapacitorEnergySource::ComputeVoltage (double initialVoltage, double Iload, Time duration)
+void
+CapacitorEnergySource::HandleEnergyChangedEvent (void)
+{
+  NS_LOG_FUNCTION (this);
+  NotifyEnergyChanged (); // notify DeviceEnergyModel objects
+}
+
+void
+CapacitorEnergySource::HandleEnergyConstantEvent (void)
+{
+  NS_LOG_FUNCTION (this);
+  NotifyEnergyConstant (); // notify DeviceEnergyModel objects
+}
+
+void
+CapacitorEnergySource::NotifyEnergyConstant (void)
+{
+  NS_LOG_FUNCTION (this);
+  // notify all device energy models installed on node
+  DeviceEnergyModelContainer::Iterator i;
+  for (i = m_models.Begin (); i != m_models.End (); i++)
+    {
+      Ptr<lorawan::LoraRadioEnergyModel> loraradio =
+          (*i)->GetObject<ns3::lorawan::LoraRadioEnergyModel> ();
+      // It is a LoraRadioEnergyModel
+      if (!(loraradio == 0))
+        {
+          TypeId typeId = (*loraradio).GetTypeId ();
+          NS_LOG_DEBUG (typeId.GetName ());
+          loraradio->ns3::lorawan::LoraRadioEnergyModel::HandleEnergyConstant ();
+        }
+    }
+}
+
+double CapacitorEnergySource::ComputeVoltage (double initialVoltage, double Iload,
+                                              double hp, Time duration)
   {
     NS_LOG_FUNCTION (this << " Iload (A): " << Iload << " duration (s): " << duration);
-    double ph = GetHarvestersPower ();
-    double ri = pow (m_supplyVoltageV, 2) / ph; // limits the power of the harvesters
-    double Rload = 0;
-    double Req = 0;
-    if (Iload == 0 || ph == 0) 
-      {
-        if (Iload == 0 && !(ph == 0))
-          {
-            NS_LOG_DEBUG ("[DEBUG] Device in OFF state");
-            Req = ri;
-          }
-        else if (!(Iload == 0) && (ph == 0))
-          {
-            NS_LOG_DEBUG ("[DEBUG] No harvester");
-            Rload = m_supplyVoltageV / Iload; // load resistance
-            Req = Rload;
-          }
-        else
-          {
-            NS_LOG_ERROR("No harvested power and no device consumption: the device is in OFF state and will never exit!");
-            // Assuming no consumption ?
-            return 0;
-          }
-      }
-    else
-      {
-        Rload = m_supplyVoltageV / Iload; // load resistance
-        Req = (Rload * ri) / (Rload + ri);
-      }
-
-  NS_LOG_DEBUG ("r_i= " << ri << ", Rload= " << Rload << ", Req= " << Req);
   NS_ASSERT (duration.IsPositive ());
+
+  std::vector<double> r = GetResistances (Iload, GetHarvestersPower ());
+  // double Rload = r.at (0);
+  double ri = r.at (1);
+  double Req = r.at (2);
   double durationS = duration.GetSeconds();
-  NS_LOG_DEBUG("Previous voltage: " << initialVoltage <<
-               " duration (s) " << durationS <<
-               " Rl " << Rload);
+  // NS_LOG_DEBUG("Previous voltage: " << initialVoltage <<
+               // " duration (s) " << durationS <<
+               // " Rl " << Rload);
   double voltage = m_supplyVoltageV*(Req/ri)*(1 - exp(-durationS/(Req * m_capacitance))) +
     initialVoltage*exp(-durationS/(Req*m_capacitance));
 
-  NS_LOG_DEBUG ("Previous voltage: " << initialVoltage <<
-                " exp= " << exp(-durationS/(Rload*m_capacitance)) <<
-                " , computed voltage = " << voltage  );
+  // NS_LOG_DEBUG ("Previous voltage: " << initialVoltage <<
+  //               " exp= " << exp(-durationS/(Rload*m_capacitance)) <<
+  //               " , computed voltage = " << voltage  );
   return voltage;
+  }
+
+  double
+  CapacitorEnergySource::ComputeInitialVoltage (double finalVoltage,
+                                                double Iload, double hp,
+                                                Time duration)
+  {
+    NS_LOG_FUNCTION (this << " Iload (A): " << Iload << " duration (s): " << duration);
+    std::vector<double> r = GetResistances (Iload, hp);
+    double ri = r.at (1);
+    double Req = r.at (2);
+    NS_LOG_DEBUG("Req= " << Req);
+    double durationS = duration.GetSeconds();
+    double V0 = (1 / exp (-durationS / (Req * m_capacitance))) *
+      (finalVoltage - m_supplyVoltageV * (Req / ri) *
+       (1 - exp (-durationS / (Req * m_capacitance))) ) ;
+    // NS_LOG_DEBUG("finalVoltage = " << finalVoltage);
+    // NS_LOG_DEBUG ("TAU= " << Req * m_capacitance);
+    // NS_LOG_DEBUG ("Computed initial voltage " << V0);
+    return V0;
   }
 
   void
@@ -397,11 +435,13 @@ CapacitorEnergySource::HandleEnergyRechargedEvent (void)
     NS_LOG_FUNCTION (this);
     Time duration = Simulator::Now () - m_lastUpdateTime;
     double Iload = CalculateDevicesCurrent ();
-    double voltage = ComputeVoltage (m_actualVoltageV, Iload, duration);
+    double voltage = ComputeVoltage (m_actualVoltageV, Iload, GetHarvestersPower(),
+                                     duration);
 
     m_actualVoltageV = voltage;
     m_lastUpdateTime = Simulator::Now();
-
+    // Update remaining energy
+    m_remainingEnergyJ = GetEnergyFromVoltage(voltage);
     NS_LOG_INFO ("Duration: " << duration.GetSeconds() <<
                   " s, new Voltage: " << m_actualVoltageV << " V");
     }
@@ -425,29 +465,29 @@ CapacitorEnergySource::PredictVoltageForLorawanState (lorawan::EndDeviceLoraPhy:
         }
       Iload += loraradio ->GetCurrent (status);
     }
-  double voltage = ComputeVoltage(initialVoltage, Iload, duration);
+  double voltage = ComputeVoltage(initialVoltage, Iload, GetHarvestersPower(), duration);
 
 return voltage;
 }
 
 std::vector<double>
-CapacitorEnergySource::GetResistances (void)
+CapacitorEnergySource::GetResistances (double Iload, double hp)
 {
   NS_LOG_FUNCTION(this);
 
-  double Iload = CalculateDevicesCurrent ();
-  double ph = GetHarvestersPower ();
-  double ri = pow (m_supplyVoltageV, 2) / ph; // limits the power of the harvesters
+  // double Iload = CalculateDevicesCurrent ();
+  // double ph = GetHarvestersPower ();
+  double ri = pow (m_supplyVoltageV, 2) / hp; // limits the power of the harvesters
   double Rload = 0;
   double Req = 0;
-  if (Iload == 0 || ph == 0)
+  if (Iload == 0 || hp == 0)
     {
-      if (Iload == 0 && !(ph == 0))
+      if (Iload == 0 && !(hp == 0))
         {
           NS_LOG_DEBUG ("[DEBUG] Device in OFF state");
           Req = ri;
         }
-      else if (!(Iload == 0) && (ph == 0))
+      else if (!(Iload == 0) && (hp == 0))
         {
           NS_LOG_DEBUG ("[DEBUG] No harvester");
           Rload = m_supplyVoltageV / Iload; // load resistance
@@ -465,6 +505,7 @@ CapacitorEnergySource::GetResistances (void)
       Rload = m_supplyVoltageV / Iload; // load resistance
       Req = (Rload * ri) / (Rload + ri);
     }
+  NS_LOG_DEBUG ("r_i= " << ri << ", Rload= " << Rload << ", Req= " << Req);
 
   std::vector<double> resistances;
   resistances.push_back(Rload);
@@ -557,6 +598,29 @@ CapacitorEnergySource::GetHarvestersPower (void)
   return totalHarvestedPower;
 }
 
+double
+CapacitorEnergySource::GetAveragePower (Time time, double samples)
+{
+  NS_LOG_FUNCTION (this);
+
+  double avgPower = 0.0;
+  // Assume single harvester
+  Ptr<EnergyHarvester> eh = m_harvesters.at(0);
+  NS_LOG_DEBUG ("is not EH " << (eh == 0));
+  if (!(eh == 0))
+    {
+      Ptr<VariableEnergyHarvester> variableEH = eh ->GetObject<VariableEnergyHarvester> ();
+      NS_LOG_DEBUG ((variableEH == 0));
+      avgPower = variableEH-> GetAveragePower (time, samples);
+    }
+  // else
+  //   {
+  //     avgPower = eh-> GetPower();
+  //   }
+  return avgPower;
+
+}
+
 void
 CapacitorEnergySource::TrackVoltage (void)
 {
@@ -576,6 +640,12 @@ CapacitorEnergySource::TrackVoltage (void)
   outputFile << Simulator::Now ().GetMilliSeconds () <<
     " " << GetActualVoltage () << std::endl;
   outputFile.close ();
+}
+
+std::vector<Ptr<EnergyHarvester>>
+CapacitorEnergySource::GetEnergyHarvesters (void)
+{
+  return m_harvesters; 
 }
 
 } // namespace ns3
