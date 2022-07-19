@@ -1004,7 +1004,7 @@ double EndDeviceLorawanMac::GetEnergyThresholdForSuccessfulCycle (Ptr<Packet> pa
     m_retxParams.waitingAck = false;
     m_retxParams.sendingMultipleUnconfirmed = false;
     m_retxParams.retxLeft = m_maxNumbTx;
-    m_retxParams.packet = 0;
+//    m_retxParams.packet = 0;
     m_retxParams.firstAttempt = Seconds (0);
 
     // Cancel next retransmissions, if any
