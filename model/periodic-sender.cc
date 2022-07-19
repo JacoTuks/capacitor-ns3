@@ -113,15 +113,16 @@ PeriodicSender::SendPacket (void)
 
   // Create and send a new packet
   Ptr<Packet> packet;
+  int randomsize = 0;
   if (m_pktSizeRV)
-    {
-      int randomsize = m_pktSizeRV->GetInteger ();
-      packet = Create<Packet> (m_basePktSize + randomsize);
-    }
-  else
-    {
-      packet = Create<Packet> (m_basePktSize);
-    }
+    randomsize = m_pktSizeRV->GetInteger ();
+
+  NS_LOG_DEBUG ("Creating an application data packet with a base size of " << (unsigned) m_basePktSize<< " and randomsize added of " << randomsize);     
+
+  packet = Create<Packet> (m_basePktSize + randomsize);
+
+  m_mac->IndicateAppPacketGenerated(packet, m_basePktSize + randomsize);
+
   m_mac->Send (packet);
   // Fire the callback
   m_generatedPacket();

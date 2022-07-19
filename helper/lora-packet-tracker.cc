@@ -1024,9 +1024,20 @@ LoraPacketTracker::PrintPerformance (Time start, Time stop, int gwId)
 std::string
 LoraPacketTracker::getPerformanceLegend()
 {
-    return   "Total unconfirmed Successful unconfirmed | Successfully extracted confirmed packets Successfully ACKed confirmed packets | Incomplete Confirmed | Successful with 1 Successful with 2 Successful with 3 Successful with 4 Successful with 5 Successful with 6 Successful with 7 Successful with 8 | Failed after 1 Failed after 2 Failed after 3 Failed after 4 Failed after 5 Failed after 6 Failed after 7 Failed after 8 | Average Delay Average ACK Delay | Total Retransmission amounts || PHY Total PHY Successful PHY Interfered PHY No More Receivers PHY Under Sensitivity PHY Lost Because TX ** CPSR confirmed sent CPSR confirmed ACKed\n";
+  return   "Total unconfirmed Successful unconfirmed | Successfully extracted confirmed packets Successfully ACKed " 
+            "confirmed packets | Incomplete Confirmed | Successful with 1 Successful with 2 Successful with 3 Successful "
+            "with 4 Successful with 5 Successful with 6 Successful with 7 Successful with 8 | Failed after 1 Failed after 2 " 
+            "Failed after 3 Failed after 4 Failed after 5 Failed after 6 Failed after 7 Failed after 8 | Average Delay Average "
+              "ACK Delay | Total Retransmission amounts || PHY Total PHY Successful PHY Interfered PHY No More Receivers "
+              "PHY Under Sensitivity PHY Lost Because TX ** CPSR confirmed sent CPSR confirmed ACKed "
+              "** ACS Generated confirmed application packets Sent confirmed application packets " 
+              "Successfully extracted confirmed application packets " 
+              "Successfully extracted ACKed confirmed application packets "             
+              "ACS Generated unconfirmed application packets Sent unconfirmed application packets " 
+              "Successfully extracted unconfirmed application packets"
+              " $ generated app Packets Interrupted Tx packets noEnergy Packets noEnergyExpandedTotal packets (accounts for NbTrans + both traffic types) NoEnergyExpandedUnconf noEnergyExpandedConf"
+              "\n";
 }
-
 std::string
   LoraPacketTracker::CountRetransmissionsPorted (Time startTime, Time stopTime, int gwId, int returnString)
   {
