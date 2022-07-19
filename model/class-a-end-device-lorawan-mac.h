@@ -225,6 +225,8 @@ private:
    */
   uint8_t m_rx1DrOffset;
 
+  bool m_W2SFSameAsW1;
+
 }; /* ClassAEndDeviceLorawanMac */
 } /* namespace lorawan */
 } /* namespace ns3 */

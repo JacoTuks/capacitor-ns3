@@ -43,6 +43,11 @@ ClassAEndDeviceLorawanMac::GetTypeId (void)
           .SetParent<EndDeviceLorawanMac> ()
           .SetGroupName ("lorawan")
           .AddConstructor<ClassAEndDeviceLorawanMac> ()
+          .AddAttribute ("Window2SFSameAsW1",
+                          "Whether device should listen with the same SF as W1",
+                          BooleanValue (false),
+                          MakeBooleanAccessor (&ClassAEndDeviceLorawanMac::m_W2SFSameAsW1),
+                          MakeBooleanChecker ())            
           .AddAttribute (
               "FastRx2", "Whether to employ a the same DR in RX1 and RX2", BooleanValue (false),
               MakeBooleanAccessor (&ClassAEndDeviceLorawanMac::m_fastRx2), MakeBooleanChecker ())
@@ -82,9 +87,11 @@ ClassAEndDeviceLorawanMac::ClassAEndDeviceLorawanMac ()
       m_receiveDelay1 (Seconds (1)),
       // LoraWAN default
       m_receiveDelay2 (Seconds (2)),
-      m_rx1DrOffset (0)
+      m_rx1DrOffset (0),
+      m_W2SFSameAsW1(false)
 {
   NS_LOG_FUNCTION (this);
+  NS_LOG_DEBUG(" My window 2 usage is " << m_W2SFSameAsW1);
 
   // Void the two receiveWindow events
   m_closeFirstWindow = EventId ();
@@ -215,14 +222,18 @@ ClassAEndDeviceLorawanMac::Receive (Ptr<Packet const> packet)
           // packet in the second receive window and finding out, after the
           // fact, that the packet is not for us. In either case, if we no
           // longer have any retransmissions left, we declare failure.
-          if (m_retxParams.waitingAck && m_secondReceiveWindow.IsExpired ())
+          if (m_secondReceiveWindow.IsExpired ())
             {
               if (m_retxParams.retxLeft == 0)
                 {
                   uint8_t txs = m_maxNumbTx - (m_retxParams.retxLeft);
-                  m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
-                  NS_LOG_DEBUG ("Failure: no more retransmissions left. Used "
-                                << unsigned (txs) << " transmissions.");
+                  if(m_retxParams.waitingAck)
+                    {
+                      m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
+                      NS_LOG_DEBUG ("Failure: no more retransmissions left for confirmed packet. Used " << unsigned(txs) << " transmissions.");
+                    }
+                  else if(m_retxParams.sendingMultipleUnconfirmed)
+                      NS_LOG_DEBUG ("Failure: no more retransmissions left for unconfirmed packet. Used " << unsigned(txs) << " transmissions.");
 
                   // Reset retransmission parameters
                   resetRetransmissionParameters ();
@@ -236,7 +247,7 @@ ClassAEndDeviceLorawanMac::Receive (Ptr<Packet const> packet)
             }
         }
     }
-  else if (m_retxParams.waitingAck && m_secondReceiveWindow.IsExpired ())
+  else if (m_secondReceiveWindow.IsExpired ())
     {
       NS_LOG_INFO ("The packet we are receiving is in uplink.");
       if (m_retxParams.retxLeft > 0)
@@ -248,9 +259,14 @@ ClassAEndDeviceLorawanMac::Receive (Ptr<Packet const> packet)
       else
         {
           uint8_t txs = m_maxNumbTx - (m_retxParams.retxLeft);
-          m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
-          NS_LOG_DEBUG ("Failure: no more retransmissions left. Used " << unsigned (txs)
-                                                                       << " transmissions.");
+          if(m_retxParams.waitingAck)
+            {
+
+              m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
+              NS_LOG_DEBUG ("Failure: no more retransmissions left for confirmed packet. Used " << unsigned(txs) << " transmissions.");
+            }
+          else if (m_retxParams.sendingMultipleUnconfirmed)
+              NS_LOG_DEBUG ("Failure: no more retransmissions left for unconfirmed packet. Used " << unsigned(txs) << " transmissions.");
 
           // Reset retransmission parameters
           resetRetransmissionParameters ();
@@ -273,20 +289,23 @@ ClassAEndDeviceLorawanMac::FailedReception (Ptr<Packet const> packet, bool lostB
     }
 
   // If needed, schedule a retransmission
-  if (m_secondReceiveWindow.IsExpired () && m_retxParams.waitingAck)
+  if (m_retxParams.waitingAck)
     {
       if (m_retxParams.retxLeft > 0)
         {
           this->Send (m_retxParams.packet);
-          NS_LOG_INFO ("We have " << unsigned (m_retxParams.retxLeft)
-                                  << " retransmissions left: rescheduling transmission.");
+          NS_LOG_INFO ("We have " << unsigned(m_retxParams.retxLeft) << " retransmissions left: rescheduling transmission.");
         }
       else
         {
           uint8_t txs = m_maxNumbTx - (m_retxParams.retxLeft);
-          m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
-          NS_LOG_DEBUG ("Failure: no more retransmissions left. Used " << unsigned (txs)
-                                                                       << " transmissions.");
+          if( m_retxParams.waitingAck)
+            {          
+             m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
+             NS_LOG_DEBUG ("Failure: no more retransmissions left for confirmed packet. Used " << unsigned(txs) << " transmissions.");              
+            }
+          else if(m_retxParams.sendingMultipleUnconfirmed)
+              NS_LOG_DEBUG ("Failure: no more retransmissions left for unconfirmed packet. Used " << unsigned(txs) << " transmissions.");
 
           // Reset retransmission parameters
           resetRetransmissionParameters ();
@@ -500,24 +519,32 @@ ClassAEndDeviceLorawanMac::CloseSecondReceiveWindow (void)
       break;
     }
 
-  if (m_retxParams.waitingAck)
-    {
+    if (m_retxParams.retxLeft > 0 )
+      {
       NS_LOG_DEBUG ("No reception initiated by PHY: rescheduling transmission.");
-      if (m_retxParams.retxLeft > 0)
-        {
-          NS_LOG_INFO ("We have " << unsigned (m_retxParams.retxLeft)
-                                  << " retransmissions left: rescheduling transmission.");
-          this->Send (m_retxParams.packet);
-        }
+        if(m_retxParams.waitingAck)
+           NS_LOG_DEBUG ("No reception initiated by PHY: rescheduling transmission of confirmed packet.");
+
+        if(m_retxParams.sendingMultipleUnconfirmed)
+           NS_LOG_DEBUG ("No reception initiated by PHY: rescheduling transmission of unconfirmed packet.");     
+           
+        NS_LOG_INFO ("We have " << unsigned(m_retxParams.retxLeft) << " retransmissions left: rescheduling transmission.");
+
+        this->Send (m_retxParams.packet);
+      }
 
       else if (m_retxParams.retxLeft == 0 &&
                m_phy->GetObject<EndDeviceLoraPhy> ()->GetState () != EndDeviceLoraPhy::RX)
         {
           uint8_t txs = m_maxNumbTx - (m_retxParams.retxLeft);
-          m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
-          NS_LOG_DEBUG ("Failure: no more retransmissions left. Used " << unsigned (txs)
-                                                                       << " transmissions.");
+          if(m_retxParams.waitingAck)
+            {
 
+              m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
+              NS_LOG_DEBUG ("Failure: no more retransmissions left for confirmed packet. Used " << unsigned(txs) << " transmissions.");
+            }
+          else if (m_retxParams.sendingMultipleUnconfirmed)
+              NS_LOG_DEBUG ("Finished: no more retransmissions left for unconfirmed packet. Used " << unsigned(txs) << " transmissions.");
           // Reset retransmission parameters
           resetRetransmissionParameters ();
         }
@@ -525,18 +552,6 @@ ClassAEndDeviceLorawanMac::CloseSecondReceiveWindow (void)
         {
           NS_ABORT_MSG ("The number of retransmissions left is negative ! ");
         }
-    }
-  else
-    {
-      uint8_t txs = m_maxNumbTx - (m_retxParams.retxLeft);
-      m_requiredTxCallback (txs, true, m_retxParams.firstAttempt, m_retxParams.packet);
-      NS_LOG_INFO (
-          "We have " << unsigned (m_retxParams.retxLeft)
-                     << " transmissions left. We were not transmitting confirmed messages.");
-
-      // Reset retransmission parameters
-      resetRetransmissionParameters ();
-    }
 
 }
 
@@ -582,8 +597,9 @@ ClassAEndDeviceLorawanMac::SetSecondReceiveWindowDataRate (uint8_t dataRate)
 uint8_t
 ClassAEndDeviceLorawanMac::GetSecondReceiveWindowDataRate (void)
 {
-  if (m_fastRx2)
+  if (m_fastRx2 or m_W2SFSameAsW1)
     {
+      NS_LOG_DEBUG("ED:Changing window 2 data rate");
       return m_dataRate;
     }
   else

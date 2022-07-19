@@ -70,6 +70,13 @@ NetworkServer::NetworkServer () :
   NS_LOG_FUNCTION_NOARGS ();
 }
 
+void
+NetworkServer::SetWindow2(bool enabled)
+{
+  NS_LOG_FUNCTION(enabled);
+  m_status->SetW2SFSameAsW1(enabled);
+}
+
 NetworkServer::~NetworkServer ()
 {
   NS_LOG_FUNCTION_NOARGS ();

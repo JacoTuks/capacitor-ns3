@@ -63,6 +63,11 @@ EndDeviceLorawanMac::GetTypeId (void)
                            "could not send the packet",
                            MakeTraceSourceAccessor (&EndDeviceLorawanMac::m_macSendingNotPossible),
                            "ns3::Packet::TracedCallback")
+          .AddTraceSource ("AppPacketGenerated",
+                            "Periodic sender generated an Application packet.",
+                            MakeTraceSourceAccessor
+                              (&EndDeviceLorawanMac::m_appPacketGenerated),
+                            "ns3::TracedValueCallback::uint8_t")                     
           .AddAttribute ("DataRate", "Data Rate currently employed by this end device",
                          UintegerValue (0), MakeUintegerAccessor (&EndDeviceLorawanMac::m_dataRate),
                          MakeUintegerChecker<uint8_t> (0, 5))
@@ -248,7 +253,7 @@ EndDeviceLorawanMac::postponeTransmission (Time netxTxDelay, Ptr<Packet> packet)
   Simulator::Cancel (m_postponedTx);
   m_postponedTx = Simulator::Schedule (netxTxDelay, &EndDeviceLorawanMac::DoSend, this, packet);
   NS_LOG_WARN (
-      "Attempting to send, but the aggregate duty cycle won't allow it. Scheduling a tx at a delay "
+      "Attempting to send, but the aggregate duty cycle will not allow it. Scheduling a tx at a delay "
       << netxTxDelay.GetSeconds () << ".");
 }
 
@@ -269,68 +274,66 @@ EndDeviceLorawanMac::DoSend (Ptr<Packet> packet)
       packet->AddHeader (frameHdr);
 
       NS_LOG_INFO ("Added frame header of size " << frameHdr.GetSerializedSize () << " bytes.");
+      NS_LOG_INFO("Packet is now "<< (unsigned) packet->GetSize() << " bytes");
 
+      // Check that MACPayload length is below the allowed maximum
+      if (packet->GetSize () > m_maxAppPayloadForDataRate.at (m_dataRate))
+        {
+          NS_LOG_WARN ("Attempting to send a packet larger than the maximum allowed"
+                       << " size at this DataRate (DR" << unsigned(m_dataRate) <<
+                       "). Transmission canceled.");
+          return;
+        }
+        
       // Add the Lora Mac header to the packet
       LorawanMacHeader macHdr;
       ApplyNecessaryOptions (macHdr);
       packet->AddHeader (macHdr);
+      NS_LOG_INFO("Added macHdr. Packet is now "<< (unsigned) packet->GetSize() << " bytes");
 
-      // Transmit MAC packet only if the energy level allows it
-      // Check energy conditions
-      if (m_macTxIfEnergyOk)
-        {
-          Ptr<EnergySourceContainer> nodeEnergySourceContainer =
-              m_device->GetNode ()->GetObject<EnergySourceContainer> ();
-          if (!(nodeEnergySourceContainer == 0))
-            {
-              Ptr<EnergySource> eSource =
-                  nodeEnergySourceContainer->Get (0)->GetObject<EnergySource> ();
-              // this we can do because we know it is a capacitor
-              double actualVoltage =
-                  eSource->GetObject<CapacitorEnergySource> ()->GetActualVoltage ();
-              double totThreshold = GetVoltageThresholdForSuccessfulCycle (packet, Seconds(0));
-              NS_LOG_DEBUG ("Actual voltage " << actualVoltage
-                                              << " Tot threshold: " << totThreshold);
-              if (actualVoltage < totThreshold)
-                {
-                  NS_LOG_DEBUG ("Voltage is less than the voltage threshold for MAC sending. Do "
-                                "not forward the packet to PHY.");
-                  m_enoughEnergyForTx (m_device->GetNode ()->GetId (), packet, Simulator::Now (),
-                                       false);
-                  return;
-                }
-              else
-                {
-                  // Remaining energy is enough. With the transmission we could fall under the battery threshold
-                  m_enoughEnergyForTx (m_device->GetNode ()->GetId (), packet, Simulator::Now (),
-                                       true);
-                }
-            } // energy container
-        } // end check on energy
 
       // Reset MAC command list
       m_macCommandList.clear ();
 
+      uint8_t txs = m_maxNumbTx - (m_retxParams.retxLeft);
       if (m_retxParams.waitingAck)
         {
           // Call the callback to notify about the failure
-          uint8_t txs = m_maxNumbTx - (m_retxParams.retxLeft);
           m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
-          NS_LOG_DEBUG (" Received new packet from the application layer: stopping retransmission "
-                        "procedure. Used "
-                        << unsigned (txs) << " transmissions out of a maximum of "
-                        << unsigned (m_maxNumbTx) << ".");
+          NS_LOG_DEBUG (" Received new packet from the application layer: stopping retransmission procedure of confirmed packet. Used " <<
+                        unsigned(txs) << " transmissions out of a maximum of " << unsigned(m_maxNumbTx) << ".");
+        }
+      else if (m_retxParams.sendingMultipleUnconfirmed)
+        {
+          NS_LOG_DEBUG (" Received new packet from the application layer: stopping retransmission procedure for unconfirmed packet. Used " <<
+                        unsigned(txs) << " transmissions out of a maximum of " << unsigned(m_maxNumbTx) << ".");
         }
 
       // Reset retransmission parameters
       resetRetransmissionParameters ();
 
+      //Doing the copy here, as Copy() is a copy on write. If this is done later then the 1st transmission differs from other transmissions.
+      //This confuses packet tracker as the first copy of a packet has a diff value than the repeats.
+      m_retxParams.packet = packet->Copy ();
+
+
       // If this is the first transmission of a confirmed packet, save parameters for the (possible) next retransmissions.
       if (m_mType == LorawanMacHeader::CONFIRMED_DATA_UP)
         {
-          m_retxParams.packet = packet->Copy ();
+        //  NS_LOG_DEBUG ("Finalized packet: " << packet);
+          //FLAG
+          //m_retxParams.packet = packet->Copy ();
+          // NS_LOG_DEBUG ("Retx APP packet: " << m_retxParams.packet);
+          // NS_LOG_DEBUG ("Copy 2 of App packet: " << packet->Copy ());
+          // NS_LOG_DEBUG ("Copy 2 of Retx App packet: " << m_retxParams.packet->Copy ());
+
+
+          if(CheckEnergy(m_retxParams.packet) == false)
+            return;
+
           m_retxParams.retxLeft = m_maxNumbTx;
           m_retxParams.waitingAck = true;
+          m_retxParams.sendingMultipleUnconfirmed = false;
           m_retxParams.firstAttempt = Simulator::Now ();
           m_retxParams.retxLeft =
               m_retxParams.retxLeft - 1; // decreasing the number of retransmissions
@@ -343,51 +346,116 @@ EndDeviceLorawanMac::DoSend (Ptr<Packet> packet)
 
           // Sent a new packet
           NS_LOG_DEBUG ("Copied packet: " << m_retxParams.packet);
+
+          // if(CheckEnergy(m_retxParams.packet) == false)
+          //   return;
+
           m_sentNewPacket (m_retxParams.packet);
 
           // static_cast<ClassAEndDeviceLorawanMac*>(this)->SendToPhy (m_retxParams.packet);
           SendToPhy (m_retxParams.packet);
         }
+
+      else if (m_maxNumbTx > 1) //Unconfirmed packet and NbTrans is configured to be more than 1
+      {
+//          NS_LOG_DEBUG ("Finalized APP packet: " << packet);
+          //FLAG
+          //m_retxParams.packet = packet->Copy ();
+          // NS_LOG_DEBUG ("Retx APP packet: " << m_retxParams.packet);
+          // NS_LOG_DEBUG ("Copy 2 of App packet: " << packet->Copy ());
+          // NS_LOG_DEBUG ("Copy 2 of Retx App packet: " << m_retxParams.packet->Copy ());    
+
+          if(CheckEnergy(m_retxParams.packet) == false)
+            return;
+
+          m_retxParams.retxLeft = m_maxNumbTx;
+          m_retxParams.waitingAck = false;
+          m_retxParams.sendingMultipleUnconfirmed = true;
+
+
+
+          m_retxParams.firstAttempt = Simulator::Now ();
+          m_retxParams.retxLeft = m_retxParams.retxLeft - 1;       // decreasing the number of retransmissions
+
+          NS_LOG_DEBUG ("Message type is " << m_mType);
+          NS_LOG_DEBUG ("It is a unconfirmed packet. Setting retransmission parameters and decreasing the number of transmissions left.");
+
+          NS_LOG_INFO ("Added MAC header of size " << macHdr.GetSerializedSize () <<
+                       " bytes.");
+
+          // Sent a new packet
+          NS_LOG_DEBUG ("Copied packet: " << m_retxParams.packet);
+
+
+
+
+          m_sentNewPacket (m_retxParams.packet);
+
+          // static_cast<ClassAEndDeviceLorawanMac*>(this)->SendToPhy (m_retxParams.packet);
+          SendToPhy (m_retxParams.packet);
+
+      }
+
       else
         {
+          if(CheckEnergy(m_retxParams.packet) == false)
+            return;
+
+          m_retxParams.retxLeft = m_retxParams.retxLeft - 1; // decreasing the number of retransmissions
+
           m_sentNewPacket (packet);
           // static_cast<ClassAEndDeviceLorawanMac*>(this)->SendToPhy (packet);
           SendToPhy (packet);
+
         }
     }
   // this is a retransmission
   else
     {
-      if (m_retxParams.waitingAck)
+      if (m_retxParams.waitingAck or m_retxParams.sendingMultipleUnconfirmed)
         {
 
-          // Remove the headers
-          LorawanMacHeader macHdr;
-          LoraFrameHeader frameHdr;
-          packet->RemoveHeader (macHdr);
-          packet->RemoveHeader (frameHdr);
+          if(CheckEnergy(m_retxParams.packet) == false)
+            return;
 
-          // Add the Lora Frame Header to the packet
-          frameHdr = LoraFrameHeader ();
-          ApplyNecessaryOptions (frameHdr);
-          packet->AddHeader (frameHdr);
+          //Commented all of this, not sure why lorawan is tweaking packet? It's not used.
+            // Remove the headers
+            // NS_LOG_DEBUG ("Testing packet: " << m_retxParams.packet);
+            // LorawanMacHeader macHdr;
+            // LoraFrameHeader frameHdr;
+            // packet->RemoveHeader (macHdr);
+            // packet->RemoveHeader (frameHdr);
+            // NS_LOG_DEBUG(frameHdr);
+            // NS_LOG_DEBUG(macHdr);
 
-          NS_LOG_INFO ("Added frame header of size " << frameHdr.GetSerializedSize () << " bytes.");
+            // // Add the Lora Frame Header to the packet
+            // frameHdr = LoraFrameHeader ();
+            // ApplyNecessaryOptions (frameHdr);
+            // packet->AddHeader (frameHdr);
 
-          // Add the Lorawan Mac header to the packet
-          macHdr = LorawanMacHeader ();
-          ApplyNecessaryOptions (macHdr);
-          packet->AddHeader (macHdr);
+            // NS_LOG_INFO ("Added frame header of size " << frameHdr.GetSerializedSize () << " bytes.");
+
+            // // Add the Lorawan Mac header to the packet
+            // macHdr = LorawanMacHeader ();
+            // ApplyNecessaryOptions (macHdr);
+            // packet->AddHeader (macHdr);
+
+            // NS_LOG_DEBUG(frameHdr);
+            // NS_LOG_DEBUG(macHdr);
+          // NS_LOG_DEBUG ("Testing packet again: " << m_retxParams.packet);
           m_retxParams.retxLeft =
               m_retxParams.retxLeft - 1; // decreasing the number of retransmissions
-          NS_LOG_DEBUG ("Retransmitting an old packet.");
+
+          if(m_retxParams.waitingAck)
+            NS_LOG_DEBUG ("Retransmitting an old confirmed packet.");
+          else if(m_retxParams.sendingMultipleUnconfirmed)
+            NS_LOG_DEBUG ("Retransmitting an old unconfirmed packet.");
 
           // static_cast<ClassAEndDeviceLorawanMac*>(this)->SendToPhy (m_retxParams.packet);
           SendToPhy (m_retxParams.packet);
         }
     }
 } // DoSend
-
   void EndDeviceLorawanMac::SendToPhy (Ptr<Packet> packet)
   {
   }
@@ -431,6 +499,14 @@ EndDeviceLorawanMac::DoSend (Ptr<Packet> packet)
             NS_LOG_ERROR (
                 "Received downlink message not containing an ACK while we were waiting for it!");
           }
+      }
+    else
+      {     
+        NS_LOG_DEBUG ("Reset retransmission variables to default values.");
+        if(m_retxParams.sendingMultipleUnconfirmed)
+            NS_LOG_DEBUG ("Uplink retransmissions will now be cancelled.");     
+        // Reset retransmission parameters
+        resetRetransmissionParameters ();     
       }
 
     std::list<Ptr<MacCommand>> commands = frameHeader.GetCommands ();
@@ -926,6 +1002,7 @@ double EndDeviceLorawanMac::GetEnergyThresholdForSuccessfulCycle (Ptr<Packet> pa
   void EndDeviceLorawanMac::resetRetransmissionParameters ()
   {
     m_retxParams.waitingAck = false;
+    m_retxParams.sendingMultipleUnconfirmed = false;
     m_retxParams.retxLeft = m_maxNumbTx;
     m_retxParams.packet = 0;
     m_retxParams.firstAttempt = Seconds (0);
@@ -945,6 +1022,12 @@ double EndDeviceLorawanMac::GetEnergyThresholdForSuccessfulCycle (Ptr<Packet> pa
     return m_enableDRAdapt;
   }
 
+  void 
+  EndDeviceLorawanMac::IndicateAppPacketGenerated(Ptr<Packet const> packet, int size)
+  {
+    m_appPacketGenerated(packet, size, m_mType);
+  }
+  
   void EndDeviceLorawanMac::SetMaxNumberOfTransmissions (uint8_t maxNumbTx)
   {
     NS_LOG_FUNCTION (this << unsigned (maxNumbTx));
@@ -1234,6 +1317,54 @@ EndDeviceLorawanMac::GetReceiveWindowDurationInSymbols (void)
     m_params.lowDataRateOptimizationEnabled = 0;
   }
 
+bool EndDeviceLorawanMac::CheckEnergy(Ptr<Packet> packet)
+  {
+    NS_LOG_FUNCTION (packet);
+
+
+    // Transmit MAC packet only if the energy level allows it
+    // Check energy conditions
+    if (m_macTxIfEnergyOk)
+    {
+      Ptr<EnergySourceContainer> nodeEnergySourceContainer =
+          m_device->GetNode ()->GetObject<EnergySourceContainer> ();
+      if (!(nodeEnergySourceContainer == 0))
+        {
+          Ptr<EnergySource> eSource =
+              nodeEnergySourceContainer->Get (0)->GetObject<EnergySource> ();
+          // this we can do because we know it is a capacitor
+          double actualVoltage =
+              eSource->GetObject<CapacitorEnergySource> ()->GetActualVoltage ();
+          double totThreshold = GetVoltageThresholdForSuccessfulCycle (packet, Seconds(0));
+          NS_LOG_DEBUG ("Actual voltage " << actualVoltage
+                                          << " Tot threshold: " << totThreshold);
+          //FLAG
+        // m_retxParams.packet = packet->Copy ();
+
+          if (actualVoltage < totThreshold)
+            {
+              NS_LOG_DEBUG ("Voltage is less than the voltage threshold for MAC sending. Do "
+                            "not forward the packet to PHY.");
+              m_enoughEnergyForTx (m_device->GetNode ()->GetId (), packet, Simulator::Now (),
+                                  false , m_mType); //m_retxParams.packet
+              return false;
+            }
+          else
+            {
+              // Remaining energy is enough. With the transmission we could fall under the battery threshold
+              m_enoughEnergyForTx (m_device->GetNode ()->GetId (),packet, Simulator::Now (),
+                                  true, m_mType); //m_retxParams.packet
+              return true;
+            }
+        } // energy container
+    } // end check on energy
+    else
+    {
+      return true;
+    }
+    return true;
+  }
+  
 LoraTxParameters
 EndDeviceLorawanMac::GetLoraTxParams (void)
 {

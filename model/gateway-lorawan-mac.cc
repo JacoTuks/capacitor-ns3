@@ -75,24 +75,24 @@ GatewayLorawanMac::Send (Ptr<Packet> packet)
       return;
     }
 
-  // LoraTxParameters params;
-  // params.sf = GetSfFromDataRate (dataRate);
-  // params.headerDisabled = false;
-  // params.codingRate = 1;
-  // params.bandwidthHz = GetBandwidthFromDataRate (dataRate);
-  // params.nPreamble = 8;
-  // params.crcEnabled = 1;
-  // params.lowDataRateOptimizationEnabled = 0;
-
-  // FOR MODEL COMPARISON Modify to compare with the model
   LoraTxParameters params;
   params.sf = GetSfFromDataRate (dataRate);
-  params.headerDisabled = 1;
+  params.headerDisabled = false;
   params.codingRate = 1;
   params.bandwidthHz = GetBandwidthFromDataRate (dataRate);
   params.nPreamble = 8;
   params.crcEnabled = 1;
   params.lowDataRateOptimizationEnabled = 0;
+
+  // FOR MODEL COMPARISON Modify to compare with the model
+  // LoraTxParameters params;
+  // params.sf = GetSfFromDataRate (dataRate);
+  // params.headerDisabled = 1;
+  // params.codingRate = 1;
+  // params.bandwidthHz = GetBandwidthFromDataRate (dataRate);
+  // params.nPreamble = 8;
+  // params.crcEnabled = 1;
+  // params.lowDataRateOptimizationEnabled = 0;
 
   // Get the duration
   Time duration = m_phy->GetOnAirTime (packet, params);

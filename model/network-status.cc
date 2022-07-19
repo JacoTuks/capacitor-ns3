@@ -41,14 +41,22 @@ TypeId
 NetworkStatus::GetTypeId (void)
 {
   static TypeId tid = TypeId ("ns3::NetworkStatus")
+    .SetParent<Object> ()
     .AddConstructor<NetworkStatus> ()
-    .SetGroupName ("lorawan");
+    .SetGroupName ("lorawan")
+    .AddAttribute ("W2SFSameAsW1",
+                "GW:Whether device should listen with the same SF as W1",
+                BooleanValue (false),
+                MakeBooleanAccessor (&NetworkStatus::m_W2SFSameAsW1),
+                MakeBooleanChecker ());    
   return tid;
 }
 
-NetworkStatus::NetworkStatus ()
+NetworkStatus::NetworkStatus (): 
+m_W2SFSameAsW1(false)
 {
-  NS_LOG_FUNCTION_NOARGS ();
+  NS_LOG_FUNCTION (this);
+  NS_LOG_ERROR("NS:window 2 usage is " << m_W2SFSameAsW1);
 }
 
 NetworkStatus::~NetworkStatus ()
@@ -193,7 +201,19 @@ NetworkStatus::GetReplyForDevice (LoraDeviceAddress edAddress, int windowNumber)
       tag.SetFrequency (edStatus->GetFirstReceiveWindowFrequency ());
       break;
     case 2:
-      tag.SetDataRate (edStatus->GetMac ()->GetSecondReceiveWindowDataRate ());
+
+      uint8_t Window2DR = edStatus->GetMac ()->GetSecondReceiveWindowDataRate ();
+
+      NS_LOG_ERROR("Var is " << m_W2SFSameAsW1);
+      if(m_W2SFSameAsW1)
+        {
+          Window2DR = edStatus->GetMac ()->GetFirstReceiveWindowDataRate ();
+          NS_LOG_DEBUG("GW:Changing window 2 data rate");  
+        }
+      else
+        NS_LOG_DEBUG("GW:Not Changing window 2 data rate");
+      
+      tag.SetDataRate (Window2DR);
       tag.SetFrequency (edStatus->GetSecondReceiveWindowFrequency ());
       break;
     }
@@ -249,5 +269,13 @@ NetworkStatus::CountEndDevices (void)
 
   return m_endDeviceStatuses.size ();
 }
+
+void
+NetworkStatus::SetW2SFSameAsW1(bool chosen)
+{
+  NS_LOG_FUNCTION (chosen);
+  m_W2SFSameAsW1 = chosen;
+}
+
 }
 }

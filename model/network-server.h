@@ -100,6 +100,9 @@ public:
 
   Ptr<NetworkStatus> GetNetworkStatus (void);
 
+  void SetWindow2(bool enabled);
+
+
   void SetReplyPayloadSize (int payloadSize);
 
   int m_replyPayloadSize;

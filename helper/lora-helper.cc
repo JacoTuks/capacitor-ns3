@@ -117,6 +117,17 @@ NS_LOG_COMPONENT_DEFINE ("LoraHelper");
                     "RequiredTransmissions",
                     MakeCallback (&LoraPacketTracker::RequiredTransmissionsCallback,
                                   m_packetTracker));
+
+
+                mac->TraceConnectWithoutContext ("AppPacketGenerated",
+                                                MakeCallback
+                                                  (&LoraPacketTracker::AppPacketGeneratedCallback,
+                                                  m_packetTracker));                                  
+
+                mac->TraceConnectWithoutContext ("EnoughEnergyToTx",
+                                                MakeCallback
+                                                  (&LoraPacketTracker::EnoughEnergyToTxCallback,
+                                                  m_packetTracker));                                   
               }
             else if (phyHelper.GetDeviceType () ==
                      TypeId::LookupByName ("ns3::SimpleGatewayLoraPhy"))

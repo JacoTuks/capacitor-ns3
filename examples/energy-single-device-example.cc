@@ -29,7 +29,7 @@
 #include "ns3/node-container.h"
 #include "ns3/position-allocator.h"
 #include "ns3/periodic-sender-helper.h"
-#include "ns3/energy-aware-sender-helper.h"
+//#include "ns3/energy-aware-sender-helper.h"
 #include "ns3/command-line.h"
 #include "ns3/basic-energy-source-helper.h"
 #include "ns3/basic-energy-harvester-helper.h"

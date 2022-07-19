@@ -22,6 +22,7 @@
 #include "ns3/network-server-helper.h"
 #include "ns3/network-controller-components.h"
 #include "ns3/adr-component.h"
+#include "ns3/congestion-component.h"
 #include "ns3/double.h"
 #include "ns3/string.h"
 #include "ns3/trace-source-accessor.h"
@@ -141,6 +142,45 @@ NetworkServerHelper::SetAdr (std::string type)
 }
 
 void
+NetworkServerHelper::EnableCongestion (bool enableCongestion)
+{
+  NS_LOG_FUNCTION (this << enableCongestion);
+
+  m_congestionEnabled = enableCongestion;
+}
+
+void
+NetworkServerHelper::SetCongestion (std::string type)
+{
+  NS_LOG_FUNCTION (this << type);
+
+  m_congestionSupportFactory = ObjectFactory ();
+  m_congestionSupportFactory.SetTypeId (type);
+}
+
+void
+NetworkServerHelper::setPacketTracker(LoraPacketTracker &tracker)
+{
+
+m_packetTracker = &tracker;
+
+}
+
+void
+NetworkServerHelper::SetCongestionTrackingPeriod(Time period)
+{
+  m_congestionPeriod = period;
+}
+
+void
+NetworkServerHelper::EnableWindow2SFChange(bool enabled)
+{
+  NS_LOG_FUNCTION (this << enabled);
+  m_window2_SF_change_enabled = enabled;
+}
+
+
+void
 NetworkServerHelper::InstallComponents (Ptr<NetworkServer> netServer)
 {
   NS_LOG_FUNCTION (this << netServer);
@@ -159,6 +199,18 @@ NetworkServerHelper::InstallComponents (Ptr<NetworkServer> netServer)
     {
       netServer->AddComponent (m_adrSupportFactory.Create<NetworkControllerComponent> ());
     }
+
+  // Add Congestion support
+  if (m_congestionEnabled)
+    {
+      Ptr<CongestionComponent> congestionComp = m_congestionSupportFactory.Create<CongestionComponent> ();
+      congestionComp->SetGateways(m_gateways);
+      congestionComp->SetTracker(*m_packetTracker);
+      congestionComp->SetCongestionPeriod(m_congestionPeriod);
+      congestionComp->EnablePeriodicNetworkCongestionStatusPrinting(m_gateways,"congestion.txt");
+      netServer->AddComponent (congestionComp);
+      netServer->SetWindow2(m_window2_SF_change_enabled);
+    }    
 }
 }
 } // namespace ns3

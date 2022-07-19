@@ -63,25 +63,56 @@
 using namespace ns3;
 using namespace lorawan;
 
-NS_LOG_COMPONENT_DEFINE ("NetworkAnalysisCapacitor");
+NS_LOG_COMPONENT_DEFINE ("Congestion-Energy");
 
 // Inputs
-double simTime = 3600;
-double appPeriod = 300;
-double capacitance= 200; // mF
-int packetSize = 10;
-uint nDevices = 1;
-double radius = 1000;
+int nGateways = 1;
+int simulationAppPeriods = 50; //by default run the sim for 53 periods and use 20-50 periods for calcs
+double appPeriodSeconds = 591; //591
+double capacitance= 10; // mF
+uint nDevices = 1200;
+double radius = 500; ///6300
 double eh = 0.001;
 double E = 3.3; // V
 double voltageThLow = 0.545454; // 1.8 V
 double voltageThHigh = 0.9090; // 3 V
-double energyAwareSenderVoltageTh = 2.5; // V
-double eaMaxDesyncDelay = 1;
-uint8_t dr = 5;
-int confirmed = 0;
+
+uint dr = 1;
+int confirmedPercentage = 15; // % of devices sending confirmed traffic
 bool realisticChannelModel = false; // Channel model
 bool print = false; // Output control
+
+//These two might be 1 bool in the future. Right now top one controls printing and bottom one changes node side
+bool congestionEnabled = true; //Define if the congestion component must be enabled
+bool enableACS = true; //Define if the ACS must make changes at confirmed nodes
+
+bool SendAsManyAsPossible = true; //Should node only send new packet or as as many as possible when max size is exceeded.
+
+bool SendAsManyAsPossibleEnergy = true; //Should nodes send as many as possible when ACS aggregation causes energy issues at larger sizes
+bool GroupedPEnabled = true;
+
+bool Window2SFSameAsW1Flag = false;
+
+bool SendgroupedPEnergyACK = false;
+
+std::string MultiplePacketsCombiningMethod = "max";
+
+std::string congestionType = "ns3::CongestionComponent"; //Currently the only type available
+
+std::string trafficTypesGroupedP = "confirmed"; //whether grouped P should be applied to confirmed only, unconfirmed only or to both. Options are confirmed, unconfirmed or  both
+
+int desiredNumCongestionCalcs = simulationAppPeriods - 20; // how many periodic calcs there must over the entire simulationTime.
+                            
+
+
+int basePacketSize = 10;
+int randomPSizeMin = 0;
+int randomPSizeMax = 0;
+
+int numberOfTransmissions = 1; // The maximum number of transmissions allowed
+
+
+
 std::string sender = "periodicSender";
 std::string filenameRemainingVoltage = "remainingVoltage.txt";
 std::string filenameEnergyConsumption = "energyConsumption.txt";
@@ -98,6 +129,8 @@ bool enoughEnergyCallbackFirstCall = true;
 bool stateChangeCallbackFirstCall = true;
 bool TxCallbackFirstCall = true;
 int generatedPacketsAPP = 0;
+
+int countNoTx = 0;
 
 //////////////
 // Callbcks //
@@ -136,33 +169,39 @@ void
 OnRemainingVoltageChange (std::string context,
                           double oldRemainingVoltage, double remainingVoltage)
 {
+  //NS_LOG_DEBUG("Callback " << context);
+  // if (context == "0")
+  // {
 
   // NS_LOG_DEBUG("Callback " << context);
-  const char *c = filenameRemainingVoltage.c_str ();
-  std::ofstream outputFile;
-  if (remainingVoltageCallbackFirstCall)
-    {
-      // Delete contents of the file as it is opened
-      outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
-      remainingVoltageCallbackFirstCall = false;
-    }
-  else
-    {
-      // Only append to the file
-      outputFile.open (c, std::ofstream::out | std::ofstream::app);
-    }
+  // const char *c = filenameRemainingVoltage.c_str ();
+  // std::ofstream outputFile;
+  // if (remainingVoltageCallbackFirstCall)
+  //   {
+  //     // Delete contents of the file as it is opened
+  //     outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
+  //     remainingVoltageCallbackFirstCall = false;
+  //   }
+  // else
+  //   {
+  //     // Only append to the file
+  //     outputFile.open (c, std::ofstream::out | std::ofstream::app);
+  //   }
 
-  outputFile << context << " "
-             << Simulator::Now ().GetMilliSeconds ()
-             << " " << remainingVoltage
-             << std::endl;
-  outputFile.close ();
+
+  // outputFile << context << " "
+  //            << Simulator::Now ().GetSeconds ()
+  //            << " " << remainingVoltage
+  //            << std::endl;
+  // outputFile.close ();
+
+ // }
 }
 
 void OnEnergyHarvested (double oldvalue, double totalEnergyHarvested)
 {
-  NS_LOG_DEBUG("Total energy harvested: " << totalEnergyHarvested);
-  NS_LOG_DEBUG ("Energy harvested in this interval: " << totalEnergyHarvested - oldvalue);
+ // NS_LOG_DEBUG("Total energy harvested: " << totalEnergyHarvested);
+ // NS_LOG_DEBUG ("Energy harvested in this interval: " << totalEnergyHarvested - oldvalue);
 }
 
 void
@@ -175,23 +214,36 @@ void
 CheckEnoughEnergyCallback (uint32_t nodeId, Ptr<const Packet> packet,
                            Time time, bool boolValue)
 {
-  const char *c = filenameEnoughEnergy.c_str ();
-  std::ofstream outputFile;
-  if (enoughEnergyCallbackFirstCall)
-    {
-      // Delete contents of the file as it is opened
-      outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
-      enoughEnergyCallbackFirstCall = false;
-    }
-  else
-    {
-      // Only append to the file
-      outputFile.open (c, std::ofstream::out | std::ofstream::app);
-    }
 
-  outputFile << Simulator::Now ().GetSeconds () << " " << boolValue << std::endl;
-  outputFile.close ();
+  // if(boolValue == 1)
+  // {
+  //     NS_LOG_DEBUG("CheckEnoughEnergyCallback for " << nodeId << ": "<<boolValue);
+  // }
 
+  if(boolValue == 0)
+  {
+    NS_LOG_DEBUG("CheckEnoughEnergyCallback for " << nodeId << ": "<<boolValue);
+    countNoTx++;   
+ 
+
+
+    // const char *c = filenameEnoughEnergy.c_str ();
+    // std::ofstream outputFile;
+    // if (enoughEnergyCallbackFirstCall)
+    //   {
+    //     // Delete contents of the file as it is opened
+    //     outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
+    //     enoughEnergyCallbackFirstCall = false;
+    //   }
+    // else
+    //   {
+    //     // Only append to the file
+    //     outputFile.open (c, std::ofstream::out | std::ofstream::app);
+    //   }
+
+    // outputFile << nodeId<< " " <<Simulator::Now ().GetSeconds () << " " << boolValue << std::endl;
+    // outputFile.close ();
+  }
 }
 
 
@@ -207,8 +259,8 @@ OnEndDeviceStateChange (std::string context,
       // Delete contents of the file as it is opened
       outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
       // Set the initial sleep state
-      outputFile << 0 << " " << 0 << std::endl;
-      NS_LOG_DEBUG ("Append initial state inside the callback");
+      //outputFile << 0 << " " << 0 << " " << 0 << std::endl;
+      //NS_LOG_DEBUG ("Append initial state inside the callback");
       stateChangeCallbackFirstCall = false;
     }
   else
@@ -227,7 +279,7 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
 {
   if (status == EndDeviceLoraPhy::TX)
     {
-      NS_LOG_DEBUG("One transmission");
+      //NS_LOG_DEBUG("One transmission");
       const char *c = filenameTx.c_str ();
       std::ofstream outputFile;
       if (TxCallbackFirstCall)
@@ -253,6 +305,13 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
     // NS_LOG_DEBUG ("Total number of generated APP packet = " << generatedPacketsAPP);
   }
 
+  void DCRestricted(Ptr<const Packet>, uint32_t device)
+
+  {
+      NS_LOG_DEBUG("Device " << (device));
+
+  }
+
   /***********
  ** MAIN  **
  **********/
@@ -261,87 +320,80 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
 
     // Inputs
     CommandLine cmd;
-    cmd.AddValue ("pathToInputFile",
-                  "Absolute path till the input file for the varaible energy harvester",
-                  pathToInputFile);
-    cmd.AddValue ("nDevices", "Number of nodes", nDevices);
+    cmd.AddValue("nDevices", "Number of devices used in simulation", nDevices);
+    cmd.AddValue("confirmedPercentage", "Which percentage of devices should employ confirmed packets", confirmedPercentage);
     cmd.AddValue ("capacitance", "capacitance[mF]", capacitance);
-    cmd.AddValue ("simTime", "Simulation time [s]", simTime);
-    cmd.AddValue ("appPeriod", "App period [s]", appPeriod);
-    cmd.AddValue ("confirmed", "Percentage of devices sending confirmed message", confirmed);
+    cmd.AddValue ("appPeriod",
+                "The period in seconds to be used by periodically transmitting applications",
+                appPeriodSeconds);
+    cmd.AddValue("Window2SFSameAsW1Flag", "Use same SF for window 2", Window2SFSameAsW1Flag);
+    cmd.AddValue("numberOfTransmissions", "NBtrans", numberOfTransmissions);
+    cmd.AddValue("simulationAppPeriods", "How many appPeriods multiples must be in the total sim", simulationAppPeriods);
     cmd.AddValue ("dr", "dr (dr=-1 = based on the channel)", dr);
-    cmd.AddValue ("packetSize", "PacketSize", packetSize);
-    cmd.AddValue ("eaMaxDesyncDelay", "Max desync delay of energy aware sender",
-                  eaMaxDesyncDelay);
-    // cmd.AddValue ("enableVariableHarvester", "Enable harvester from input file",
-    //                enableVariableHarvester);
-    // cmd.AddValue ("sun", "Input from sunny day", sun);
     cmd.AddValue ("eh", "Harvested power [W] - eh=-1 data for sunny day, eh=-2 data for cloudy day",
                   eh);
-    cmd.AddValue ("sender", "Application sender [periodicSender, multipleShots]",
-                  sender);
     cmd.Parse (argc, argv);
 
     // Set up logging
-    LogComponentEnable ("NetworkAnalysisCapacitor", LOG_LEVEL_ALL);
-    // LogComponentEnable ("LoraPacketTracker", LOG_LEVEL_ALL);
-    LogComponentEnable ("CapacitorEnergySource", LOG_LEVEL_ALL);
+    LogComponentEnable ("Congestion-Energy", LOG_LEVEL_ALL);
+//     LogComponentEnable ("LoraPacketTracker", LOG_LEVEL_WARN);
+    //LogComponentEnable ("CapacitorEnergySource", LOG_LEVEL_ALL);
     // LogComponentEnable ("CapacitorEnergySourceHelper", LOG_LEVEL_ALL);
-    // LogComponentEnable ("LoraRadioEnergyModel", LOG_LEVEL_ALL);
-    // LogComponentEnable ("EnergyAwareSender", LOG_LEVEL_ALL);
-    // LogComponentEnable ("EnergyAwareSenderHelper", LOG_LEVEL_ALL);
-    // LogComponentEnable ("EnergyHarvester", LOG_LEVEL_ALL);
+//    LogComponentEnable ("LoraRadioEnergyModel", LOG_LEVEL_WARN);
+    // LogComponentEnable ("CongestionComponent", LOG_LEVEL_ALL);
+ //     LogComponentEnable ("PeriodicSender", LOG_LEVEL_ALL);
+    //  LogComponentEnable ("LoraFrameHeader", LOG_LEVEL_ALL);
     // LogComponentEnable ("VariableEnergyHarvester", LOG_LEVEL_ALL);
     // LogComponentEnable ("EnergySource", LOG_LEVEL_ALL);
     // LogComponentEnable ("BasicEnergySource", LOG_LEVEL_ALL);
     // LogComponentEnable ("LoraChannel", LOG_LEVEL_INFO);
-    // LogComponentEnable ("LoraPhy", LOG_LEVEL_ALL);
-    // LogComponentEnable ("EndDeviceLoraPhy", LOG_LEVEL_ALL);
+ //   LogComponentEnable ("LoraPhy", LOG_LEVEL_ALL);
+ //    LogComponentEnable ("EndDeviceLoraPhy", LOG_LEVEL_ALL);
     // LogComponentEnable ("SimpleEndDeviceLoraPhy", LOG_LEVEL_ALL);
     // LogComponentEnable ("GatewayLoraPhy", LOG_LEVEL_ALL);
     // LogComponentEnable ("SimpleGatewayLoraPhy", LOG_LEVEL_ALL);
     // LogComponentEnable ("LoraInterferenceHelper", LOG_LEVEL_ALL);
     // LogComponentEnable ("LorawanMac", LOG_LEVEL_ALL);
-    // LogComponentEnable ("EndDeviceLorawanMac", LOG_LEVEL_ALL);
-    // LogComponentEnable ("ClassAEndDeviceLorawanMac", LOG_LEVEL_ALL);
-    // LogComponentEnable ("GatewayLorawanMac", LOG_LEVEL_ALL);
-    // LogComponentEnable ("LogicalLoraChannelHelper", LOG_LEVEL_ALL);
+
+ //  LogComponentEnable ("EndDeviceLorawanMac", LOG_LEVEL_ALL);
+//
+//   LogComponentEnable ("ClassAEndDeviceLorawanMac", LOG_LEVEL_ALL);
+ //    LogComponentEnable ("CongestionComponent", LOG_LEVEL_ALL);
     // LogComponentEnable ("LogicalLoraChannel", LOG_LEVEL_ALL);
-    // LogComponentEnable ("LoraHelper", LOG_LEVEL_ALL);
+    // LogComponentEnable ("LogicalLoraChannelHelper", LOG_LEVEL_ALL);
     // LogComponentEnable ("LoraPhyHelper", LOG_LEVEL_ALL);
     // LogComponentEnable ("LorawanMacHelper", LOG_LEVEL_ALL);
-    // LogComponentEnable ("OneShotSenderHelper", LOG_LEVEL_ALL);
+  // LogComponentEnable ("EndDeviceLoraMac", LOG_LEVEL_ALL);
     // LogComponentEnable ("OneShotSender", LOG_LEVEL_ALL);
-    // LogComponentEnable ("PeriodicSender", LOG_LEVEL_ALL);
-    // LogComponentEnable ("LorawanMacHeader", LOG_LEVEL_ALL);
-    // LogComponentEnable ("LoraFrameHeader", LOG_LEVEL_ALL);
+  //   LogComponentEnable ("PeriodicSender", LOG_LEVEL_ALL);
+   //  LogComponentEnable ("LoraRadioEnergyModel", LOG_LEVEL_ALL);
+   // LogComponentEnable ("LoraTxCurrentModel", LOG_LEVEL_ALL);
 
     LogComponentEnableAll (LOG_PREFIX_FUNC);
     LogComponentEnableAll (LOG_PREFIX_NODE);
     LogComponentEnableAll (LOG_PREFIX_TIME);
 
+    Config::SetDefault ("ns3::ClassAEndDeviceLorawanMac::Window2SFSameAsW1", BooleanValue(Window2SFSameAsW1Flag));
+
+
+    double simulationTime = simulationAppPeriods*appPeriodSeconds; //Updated sim time with new value from sem
+
+    
+
+    // This is the duration of the window for each congestion calc 
+    double congestionPeriod = appPeriodSeconds; //floor((simulationTime-20*appPeriodSeconds)/desiredNumCongestionCalcs); 
+    // Updated sim time with new value from sem. 20 periods are deleted as first 20 will be excluded
+ 
     // Set SF
     Config::SetDefault ("ns3::EndDeviceLorawanMac::DataRate", UintegerValue (dr));
-    // Set MAC behavior
-    Config::SetDefault ("ns3::EndDeviceLorawanMac::MacTxIfEnergyOk", BooleanValue (false));
 
-    // Select harvester and input file
-    bool enableVariableHarvester;
-    std::string filenameHarvester;
-    if (eh == -1) // sunny
-      {
-        enableVariableHarvester = true;
-        filenameHarvester = pathToInputFile + filenameHarvesterSun;
-      }
-    else if (eh == -2) // cloudy
-      {
-        enableVariableHarvester = true;
-        filenameHarvester = pathToInputFile + filenameHarvesterCloudy;
-      }
-    else // constant harvester
-      {
-        enableVariableHarvester = false;
-      }
+    // Set MAC behavior
+    Config::SetDefault ("ns3::EndDeviceLorawanMac::MacTxIfEnergyOk", BooleanValue (true));
+
+
+    // Create the time value from the period
+    Time appPeriod = Seconds (appPeriodSeconds);
+
 
     /************************
   *  Create the channel  *
@@ -430,28 +482,37 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
     macHelper.SetDeviceType (LorawanMacHelper::ED_A);
     NetDeviceContainer endDevicesNetDevices = helper.Install (phyHelper, macHelper, endDevices);
 
-    // Set message type (Default is unconfirmed)
-    if (confirmed > 0)
-      {
-        for (int i = 0; i == std::floor (nDevices * confirmed / 100); ++i)
-          {
-            Ptr<LorawanMac> edMac =
-                endDevices.Get (i)->GetDevice (0)->GetObject<LoraNetDevice> ()->GetMac ();
-            Ptr<ClassAEndDeviceLorawanMac> edLorawanMac =
-                edMac->GetObject<ClassAEndDeviceLorawanMac> ();
+    // Figure out how many devices should employ confirmed traffic
+    int confirmedNumber = confirmedPercentage * endDevices.GetN () / 100;
+    int i = 0;
+
+    for (NodeContainer::Iterator j = endDevices.Begin (); j != endDevices.End (); ++j)
+        {
+        Ptr<Node> node = *j;
+
+        // Set message type (default is unconfirmed)
+        Ptr<LorawanMac> edMac =node->GetDevice (0)->GetObject<LoraNetDevice> ()->GetMac ();
+        Ptr<ClassAEndDeviceLorawanMac> edLorawanMac = edMac->GetObject<ClassAEndDeviceLorawanMac> ();
+
+        // Set message type, otherwise the NS does not send ACKs
+        if (i < confirmedNumber || (endDevices.GetN() == 1 && confirmedPercentage > 0))
+        {
             edLorawanMac->SetMType (LorawanMacHeader::CONFIRMED_DATA_UP);
-          }
-      }
+        }
+
+        edLorawanMac->SetMaxNumberOfTransmissions (numberOfTransmissions);
+        i++;
+        }
 
     /*********************
    *  Create Gateways  *
    *********************/
     // NS_LOG_INFO ("Creating the gateway...");
     NodeContainer gateways;
-    gateways.Create (1);
+    gateways.Create (nGateways);
 
     Ptr<ListPositionAllocator> allocator = CreateObject<ListPositionAllocator> ();
-    allocator->Add (Vector (0, 0, 0));
+    allocator->Add (Vector (0, 0, 15.0));
     mobility.SetPositionAllocator (allocator);
     mobility.Install (gateways);
 
@@ -460,10 +521,13 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
     macHelper.SetDeviceType (LorawanMacHelper::GW);
     helper.Install (phyHelper, macHelper, gateways);
 
-    if (dr < 0)
-      {
-        macHelper.SetSpreadingFactorsUp (endDevices, gateways, channel);
-      }
+    //Calculates the lowest SF for each device to use whilst ensuring connectivity.
+    //macHelper.SetSpreadingFactorsUp (endDevices, gateways, channel);
+
+
+    NS_LOG_DEBUG( "Completed configuration, there are "
+                    << endDevices.GetN() << " devices of which "
+                    << confirmedNumber << " are confirmed.");
 
     /**********************
    *  Handle buildings  *
@@ -504,30 +568,28 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
    *  Install applications on the end devices  *
    *********************************************/
 
-    if (sender == "multipleShots")
-      {
-        OneShotSenderHelper oneshotsenderHelper;
-        double sendTime = appPeriod;
-        while (sendTime < simTime)
-          {
-            oneshotsenderHelper.SetSendTime (Seconds (sendTime));
-            oneshotsenderHelper.Install (endDevices);
-            oneshotsenderHelper.SetAttribute ("PacketSize", IntegerValue (packetSize));
-            sendTime = sendTime + appPeriod;
-          }
-      }
-    else if (sender == "periodicSender")
-      {
-        PeriodicSenderHelper periodicSenderHelper;
-        periodicSenderHelper.SetPeriod (Seconds (appPeriod));
-        periodicSenderHelper.SetPacketSize (packetSize);
-        periodicSenderHelper.Install (endDevices);
-      }
+
+
+    Time appStopTime = Seconds (simulationTime) + 5*Seconds(appPeriodSeconds);
+    PeriodicSenderHelper periodicSenderHelper;
+    periodicSenderHelper.SetPeriod (Seconds(appPeriodSeconds));
+
+    periodicSenderHelper.SetPacketSize(basePacketSize);
+
+    Ptr<RandomVariableStream> rv2 = CreateObjectWithAttributes<UniformRandomVariable> (
+        "Min", DoubleValue (randomPSizeMin), "Max", DoubleValue (randomPSizeMax)); //randomPSizeMin and randomPSizeMax included
+
+    periodicSenderHelper.SetPacketSizeRandomVariable(rv2); //As indicated by email from Martina
+
+    ApplicationContainer appContainer = periodicSenderHelper.Install (endDevices);
+    appContainer.Start (Seconds (0));
+    appContainer.Stop (appStopTime);
+      
 
     /************************
    * Install Energy Model *
    ************************/
-    std::string rv = "ns3::UniformRandomVariable[Min=0|Max=" + std::to_string (E) + "]";
+    std::string rv = "ns3::UniformRandomVariable[Min=3.299|Max=" + std::to_string (E) + "]";
     Config::SetDefault ("ns3::CapacitorEnergySource::RandomInitialVoltage", StringValue (rv));
 
     CapacitorEnergySourceHelper capacitorHelper;
@@ -554,12 +616,12 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
     // Set initial voltage uniformy random in (0, E)
     capacitorHelper.Set ("RandomInitialVoltage", StringValue (rv));
 
-    capacitorHelper.Set ("PeriodicVoltageUpdateInterval", TimeValue (MilliSeconds (600)));
+    capacitorHelper.Set ("PeriodicVoltageUpdateInterval", TimeValue (Seconds (appPeriodSeconds)));
     // capacitorHelper.Set ("FilenameVoltageTracking", StringValue (filenameRemainingVoltage));
 
     //  // Basic Energy harvesting
     BasicEnergyHarvesterHelper harvesterHelper;
-    harvesterHelper.Set ("PeriodicHarvestedPowerUpdateInterval", TimeValue (Seconds (10)));
+    harvesterHelper.Set ("PeriodicHarvestedPowerUpdateInterval", TimeValue (Seconds (1)));
     // // Constant harvesting rate
     double meanPowerDensity = eh;
     double variancePowerDensity = 0.08;
@@ -567,12 +629,10 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
       std::to_string (meanPowerDensity) +
       "|Variance=" + std::to_string (variancePowerDensity) +
       "|Bound=" + std::to_string(meanPowerDensity)+"]";
-    // std::string power = "ns3::UniformRandomVariable[Min=0|Max="+std::to_string(2*eh)+"]";
-    harvesterHelper.Set ("HarvestablePower", StringValue (power));
 
-    // // Variable energy harvesting
-    VariableEnergyHarvesterHelper variableEhHelper;
-    variableEhHelper.Set ("Filename", StringValue (filenameHarvester));
+    //constant power
+    power = "ns3::UniformRandomVariable[Min=" +std::to_string(eh)+ + "|Max=" +std::to_string(eh)+"]";
+    harvesterHelper.Set ("HarvestablePower", StringValue (power));
 
     LoraRadioEnergyModelHelper radioEnergy;
     radioEnergy.Set ("EnterSleepIfDepleted", BooleanValue (false));
@@ -594,14 +654,13 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
 
     // Names::Add ("/Names/EnergySource", sources.Get(0));
 
-    if (enableVariableHarvester)
-      {
-        EnergyHarvesterContainer harvesters = variableEhHelper.Install (sources);
-      }
-    else
-      {
-        EnergyHarvesterContainer harvesters = harvesterHelper.Install (sources);
-      }
+    EnergyHarvesterContainer harvesters = harvesterHelper.Install (sources);
+
+    Names::Add("Names/EnergyHarvester", harvesters.Get (0));
+    Ptr<EnergyHarvester> myHarvester = harvesters.Get(0);
+    myHarvester -> TraceConnectWithoutContext("TotalEnergyHarvested",
+                                              MakeCallback(&OnEnergyHarvested));
+
 
     ///////////////////////
     // Connect tracesources
@@ -622,22 +681,34 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
           }
         Ptr<EndDeviceLoraPhy> phy = loraNetDevice->GetPhy ()->GetObject<EndDeviceLoraPhy> ();
         Ptr<EndDeviceLorawanMac> mac = loraNetDevice->GetMac ()->GetObject<EndDeviceLorawanMac> ();
+
+        //Can't use this in large sims
         // mac->TraceConnectWithoutContext ("EnoughEnergyToTx",
-        //                                      MakeCallback (&CheckEnoughEnergyCallback));
+        //                                       MakeCallback (&CheckEnoughEnergyCallback));
+
+        // mac->TraceConnectWithoutContext("SendingNotPossible", MakeCallback(&DCRestricted));                                     
         // std::string name = "Names/nodeEdLoraPhy/"
         //   << std::to_string(endDevices.Get(j)->GetId()) << "/";
 
-        phy->TraceConnect ("EndDeviceState", std::to_string (j),
-                           MakeCallback (&OnEndDeviceStateChange));
-        phy->TraceConnect ("EndDeviceState", std::to_string (j),
-                           MakeCallback (&OnEndDeviceTx));
-        capacitorES -> TraceConnect("RemainingVoltage", std::to_string(j),
-                                    MakeCallback (&OnRemainingVoltageChange));
+        //Can't use in large sims
 
-        ns3::Config::ConnectWithoutContext ("/Names/nodeApp"+std::to_string(j)+"/GeneratedPacket",
-                                            MakeCallback (&OnGeneratedPacket));
+        // phy->TraceConnect ("EndDeviceState", std::to_string (j),
+        //                    MakeCallback (&OnEndDeviceStateChange));
+
+        // phy->TraceConnect ("EndDeviceState", std::to_string (j),
+        //                    MakeCallback (&OnEndDeviceTx));
+        // capacitorES -> TraceConnect("RemainingVoltage", std::to_string(j),
+        //                             MakeCallback (&OnRemainingVoltageChange));
+
+        // ns3::Config::ConnectWithoutContext ("/Names/nodeApp"+std::to_string(j)+"/GeneratedPacket",
+        //                                     MakeCallback (&OnGeneratedPacket));
         // NS_LOG_DEBUG ("Tracesources connected for ED " << j);
       }
+
+    ///////////////////
+    // Packet tracker
+    ///////////////////
+    LoraPacketTracker &tracker = helper.GetPacketTracker ();
 
     ////////////
     // Create NS
@@ -646,9 +717,17 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
     NodeContainer networkServers;
     networkServers.Create (1);
 
+
+
     // Install the NetworkServer application on the network server
     NetworkServerHelper networkServerHelper;
     networkServerHelper.SetGateways (gateways);
+    networkServerHelper.EnableCongestion(congestionEnabled);
+    networkServerHelper.setPacketTracker(tracker);
+    networkServerHelper.SetCongestion (congestionType);
+    networkServerHelper.SetCongestionTrackingPeriod(Seconds(congestionPeriod));
+    networkServerHelper.EnableWindow2SFChange(Window2SFSameAsW1Flag);
+
     networkServerHelper.SetEndDevices (endDevices);
     networkServerHelper.Install (networkServers);
 
@@ -656,100 +735,131 @@ OnEndDeviceTx (std::string context, EndDeviceLoraPhy::State oldstatus,
     ForwarderHelper forwarderHelper;
     forwarderHelper.Install (gateways);
 
-    ///////////////////
-    // Packet tracker
-    ///////////////////
-    LoraPacketTracker &tracker = helper.GetPacketTracker ();
 
     /****************
   *  Simulation  *
   ****************/
 
-    Simulator::Stop (Seconds (simTime));
 
+    Simulator::Stop (appStopTime + Seconds(10)); // adding more time so that tracker can calculate overall metric after 3 periods have passed from time frame of interest
+
+    NS_LOG_INFO( "Congestion is calculated over " << congestionPeriod << " s intervals");
+    NS_LOG_INFO( "Stop time is " << (appStopTime + 5*Seconds(appPeriodSeconds)+ Seconds(10)).GetSeconds() << " s ");
+    NS_LOG_INFO ("Running simulation...");
     Simulator::Run ();
 
     //////////
     // Outputs
     //////////
-    std::string pdr = tracker.CountMacPacketsGlobally (Seconds (0), Seconds (simTime));
-    std::string cpsr = "0 0";
-    if (confirmed > 0)
-      {
-        cpsr = tracker.CountMacPacketsGloballyCpsr (Seconds (0), Seconds (simTime));
-      }
-    // if (nDevices == 1)
-    //   {
-    //     std::cout << generatedPacketsAPP << " " << pdr << " " << cpsr << std::endl;
-    //     std::vector<uint> v = tracker.CountMacPacketsPerEd(Seconds(0), Seconds(simTime), 0);
-    //     std::cout << std::to_string(v.at(0)) << " " << std::to_string(v.at(1)) << std::endl;
-    //   }
 
-    std::vector<int> edsPhyPerf (3,0);
-    std::vector<int> edPhyPerf (3,0);
-    for (uint i = 0; i < nDevices; i++)
-      {
-        edPhyPerf = tracker.CountPhyPacketsPerEd (Seconds (0), Seconds (simTime),
-                                                  endDevices.Get (i)->GetId ());
+    //exclude first 20 to allow acs to settle (no random + packet vals so should settle quickly)
+    NS_LOG_INFO( "Computing over the period "<< 20*appPeriodSeconds << "s to "<< Seconds(simulationAppPeriods*appPeriodSeconds).GetSeconds() << "s");
+    tracker.PrintPerformance(Seconds(20*appPeriodSeconds), Seconds(simulationAppPeriods*appPeriodSeconds), nDevices); 
 
-        edsPhyPerf.at (0) = edsPhyPerf.at (0) + edPhyPerf.at (0);
-        edsPhyPerf.at (1) = edsPhyPerf.at (1) + edPhyPerf.at (1);
-        edsPhyPerf.at (2) = edsPhyPerf.at (2) + edPhyPerf.at (2);
-      }
+    if(print)
+    {
 
-    std::cout << pdr << " " << cpsr << " ";
-    std::cout << tracker.PrintPhyPacketsPerGw (Seconds (0), Seconds (simTime),
-                                               gateways.Get (0)->GetId ())
-              << generatedPacketsAPP << " "
-              << std::to_string (edsPhyPerf.at (0)) << " "
-              << std::to_string (edsPhyPerf.at (1)) << " "
-              << std::to_string (edsPhyPerf.at (2))
-              << std::endl;
 
-    if (print && nDevices == 1)
-      {
-        // Avoid non-existent files
-        NS_LOG_DEBUG ("Create file if not done yet: " << stateChangeCallbackFirstCall);
-        // Fix output files if not created
-        if (stateChangeCallbackFirstCall)
-          {
-            const char *c = filenameState.c_str ();
-            std::ofstream outputFile;
-            // Delete contents of the file as it is opened
-            outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
-            // Set the initial sleep state
-            outputFile << 0 << " " << 0 << std::endl;
-            NS_LOG_DEBUG ("Append initial state");
-            stateChangeCallbackFirstCall = false;
-            outputFile.close ();
-          }
+    
+      int confirmed = 1;
+      std::string pdr = tracker.CountMacPacketsGlobally (Seconds (0), Seconds (simulationTime));
+      std::string cpsr = "0 0";
+      if (confirmed > 0)
+        {
+          cpsr = tracker.CountMacPacketsGloballyCpsr (Seconds (0), Seconds (simulationTime));
+        }
+      // if (nDevices == 1)
+      //   {
+      //     std::cout << generatedPacketsAPP << " " << pdr << " " << cpsr << std::endl;
+      //     std::vector<uint> v = tracker.CountMacPacketsPerEd(Seconds(0), Seconds(simulationTime), 0);
+      //     std::cout << std::to_string(v.at(0)) << " " << std::to_string(v.at(1)) << std::endl;
+      //   }
 
-        if (energyConsumptionCallbackFirstCall)
-          {
-            const char *c = filenameEnergyConsumption.c_str ();
-            std::ofstream outputFile;
-            // Delete contents of the file as it is opened
-            outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
-            // Set the initial sleep state
-            outputFile << 0 << " " << 0 << std::endl;
-            NS_LOG_DEBUG ("Append initially not enough energy, because never called");
-            energyConsumptionCallbackFirstCall = false;
-            outputFile.close ();
-          }
+      std::vector<int> edsPhyPerf (3,0);
+      std::vector<int> edPhyPerf (3,0);
+      for (uint i = 0; i < nDevices; i++)
+        {
+          edPhyPerf = tracker.CountPhyPacketsPerEd (Seconds (0), appStopTime + Seconds(10),
+                                                    endDevices.Get (i)->GetId ());
 
-        if (enoughEnergyCallbackFirstCall)
-          {
-            const char *c = filenameEnoughEnergy.c_str ();
-            std::ofstream outputFile;
-            // Delete contents of the file as it is opened
-            outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
-            // Set the initial
-            outputFile << 0 << " " << 0 << std::endl;
-            NS_LOG_DEBUG ("Append initially not enough energy, because never called");
-            enoughEnergyCallbackFirstCall = false;
-            outputFile.close ();
-          }
-      }
+          edsPhyPerf.at (0) = edsPhyPerf.at (0) + edPhyPerf.at (0);
+          edsPhyPerf.at (1) = edsPhyPerf.at (1) + edPhyPerf.at (1);
+          edsPhyPerf.at (2) = edsPhyPerf.at (2) + edPhyPerf.at (2);
+        }
+
+      NS_LOG_DEBUG("\n" <<"From start PDR: " << pdr << "\nFrom start CPSR: " << cpsr << "\n");
+      NS_LOG_DEBUG("PHY from start: "<< tracker.PrintPhyPacketsPerGw (Seconds (0), Seconds (simulationTime),
+                                                gateways.Get (0)->GetId ()));
+              NS_LOG_DEBUG("\n Generated app: " << generatedPacketsAPP << " Sent "
+                << std::to_string (edsPhyPerf.at (0)) << " Recv "
+                << std::to_string (edsPhyPerf.at (1)) << "  Interrupted "
+                << std::to_string (edsPhyPerf.at (2)) << " Number no Energy events "
+                << std::to_string(countNoTx));
+              
+      //generatedPacketsAPP will be higher than the counts as it doesn't have a time window, it runs till simulation::stop() which is 3 periods +10s more      
+
+      if (print && nDevices == 1)
+        {
+          // Avoid non-existent files
+          NS_LOG_DEBUG ("Create file if not done yet: " << stateChangeCallbackFirstCall);
+          // Fix output files if not created
+          if (stateChangeCallbackFirstCall)
+            {
+              const char *c = filenameState.c_str ();
+              std::ofstream outputFile;
+              // Delete contents of the file as it is opened
+              outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
+              // Set the initial sleep state
+              outputFile << 0 << " " << 0 << std::endl;
+              NS_LOG_DEBUG ("Append initial state");
+              stateChangeCallbackFirstCall = false;
+              outputFile.close ();
+            }
+
+          if (energyConsumptionCallbackFirstCall)
+            {
+              const char *c = filenameEnergyConsumption.c_str ();
+              std::ofstream outputFile;
+              // Delete contents of the file as it is opened
+              outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
+              // Set the initial sleep state
+              outputFile << 0 << " " << 0 << std::endl;
+              NS_LOG_DEBUG ("Append initially not enough energy, because never called");
+              energyConsumptionCallbackFirstCall = false;
+              outputFile.close ();
+            }
+
+          if (enoughEnergyCallbackFirstCall)
+            {
+              const char *c = filenameEnoughEnergy.c_str ();
+              std::ofstream outputFile;
+              // Delete contents of the file as it is opened
+              outputFile.open (c, std::ofstream::out | std::ofstream::trunc);
+              // Set the initial
+              outputFile << 0 << " " << 0 << std::endl;
+              NS_LOG_DEBUG ("Append initially not enough energy, because never called");
+              enoughEnergyCallbackFirstCall = false;
+              outputFile.close ();
+            }
+        }
+
+      int drCounts[6] = {0};
+      for (uint j = 0; j < nDevices; ++j)
+        {
+          
+          Ptr<Node> node = endDevices.Get (j);
+          Ptr<LoraNetDevice> loraNetDevice = node->GetDevice (0)->GetObject<LoraNetDevice> (); 
+          Ptr<EndDeviceLorawanMac> mac = loraNetDevice->GetMac ()->GetObject<EndDeviceLorawanMac> ();
+          uint8_t dr= mac->GetDataRate();
+
+          drCounts[dr]++;
+        // NS_LOG_DEBUG("Device " << (unsigned) j << " uses " << (unsigned) dr);
+
+        }
+        for (uint j=0; j<= 5 ; ++j)
+          NS_LOG_DEBUG(drCounts[j]);
+    }
+
 
     // Destroy simulator
     Simulator::Destroy ();

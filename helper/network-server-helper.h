@@ -28,6 +28,7 @@
 #include "ns3/node-container.h"
 #include "ns3/application-container.h"
 #include "ns3/point-to-point-helper.h"
+#include "ns3/lora-packet-tracker.h"
 #include "ns3/network-server.h"
 #include <stdint.h>
 #include <string>
@@ -73,6 +74,36 @@ public:
    */
   void SetAdr (std::string type);
 
+  /**
+   * Enable (true) or disable (false) the Congestion component in the Network
+   * Server created by this helper.
+   */
+  void EnableCongestion (bool enableCongestion);
+
+  /**
+   * Set the Congestion monitoring and solution implementation to use in the Network Server created
+   * by this helper.
+   */
+  void SetCongestion (std::string type);
+
+ /**
+   * Set the LoraPacketTracker object to give to congestion monitoring.
+   */
+
+  void setPacketTracker(LoraPacketTracker &tracker);
+
+
+
+  LoraPacketTracker* m_packetTracker = 0;
+
+
+  void EnableWindow2SFChange(bool enabled);
+
+ /**
+   * Set the monitoring Period for congestion monitoring. Congestion will be repeatedly calculated over windows of <period> seconds.
+   */
+  void SetCongestionTrackingPeriod(Time period);
+
 
 private:
   void InstallComponents (Ptr<NetworkServer> netServer);
@@ -87,9 +118,12 @@ private:
   PointToPointHelper p2pHelper; //!< Helper to create PointToPoint links
 
   bool m_adrEnabled;
+  bool m_congestionEnabled;
+  bool m_window2_SF_change_enabled;
 
+  Time m_congestionPeriod;
   ObjectFactory m_adrSupportFactory;
-
+  ObjectFactory m_congestionSupportFactory;
   // The payload size of the DL packet
   int m_replyPayloadSize;
 };

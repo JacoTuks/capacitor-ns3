@@ -19,3 +19,9 @@ def build(bld):
 
     obj = bld.create_ns3_program('network-analysis-capacitor', ['lorawan', 'energy'])
     obj.source = 'network-analysis-capacitor.cc'
+
+    obj = bld.create_ns3_program('congestion-tracking', ['lorawan'])
+    obj.source = 'congestion-tracking.cc'
+
+    obj = bld.create_ns3_program('congestion-energy', ['lorawan'])
+    obj.source = 'congestion-energy.cc'

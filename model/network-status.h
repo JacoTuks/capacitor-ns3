@@ -116,9 +116,16 @@ public:
    */
   int CountEndDevices (void);
 
+  void SetW2SFSameAsW1(bool chosen);
+
 public:
   std::map<LoraDeviceAddress, Ptr<EndDeviceStatus>> m_endDeviceStatuses;
   std::map<Address, Ptr<GatewayStatus>> m_gatewayStatuses;
+
+private:
+
+bool m_W2SFSameAsW1;
+
 };
 
 } // namespace lorawan
