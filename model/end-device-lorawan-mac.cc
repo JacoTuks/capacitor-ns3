@@ -771,14 +771,23 @@ EndDeviceLorawanMac::DoSend (Ptr<Packet> packet)
     if (dynamicThreshold)
       {
         Ptr<Packet> copyPacket = packet-> Copy(); // use this only for duration computation
+        NS_LOG_DEBUG("Packet size " << (unsigned) packet->GetSize ());        
+        NS_LOG_DEBUG("copyPacket size " << (unsigned) copyPacket->GetSize ()); 
+
+
+
         // Add the Lora Frame Header to the packet
-        LoraFrameHeader frameHdr;
-        ApplyNecessaryOptions (frameHdr);
-        copyPacket->AddHeader (frameHdr);
-        // Add the Lora Mac header to the packet
-        LorawanMacHeader macHdr;
-        ApplyNecessaryOptions (macHdr);
-        copyPacket->AddHeader (macHdr);
+        //NOT NEEDED, packet already has these added in DoSend().
+        // LoraFrameHeader frameHdr;
+        // ApplyNecessaryOptions (frameHdr);
+        // copyPacket->AddHeader (frameHdr);
+        // // Add the Lora Mac header to the packet
+        // LorawanMacHeader macHdr;
+        // ApplyNecessaryOptions (macHdr);
+        // copyPacket->AddHeader (macHdr);
+
+        NS_LOG_DEBUG("copyPacket size after headers" << (unsigned) copyPacket->GetSize ()); 
+
 
         Ptr<LogicalLoraChannel> txChannel = GetChannelForTx ();
         Time duration = m_phy->GetOnAirTime (copyPacket, m_params);
