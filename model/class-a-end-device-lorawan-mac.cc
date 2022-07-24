@@ -289,7 +289,7 @@ ClassAEndDeviceLorawanMac::FailedReception (Ptr<Packet const> packet, bool lostB
     }
 
   // If needed, schedule a retransmission
-  if (m_retxParams.waitingAck)
+  if (m_secondReceiveWindow.IsExpired ())
     {
       if (m_retxParams.retxLeft > 0)
         {
@@ -300,9 +300,10 @@ ClassAEndDeviceLorawanMac::FailedReception (Ptr<Packet const> packet, bool lostB
         {
           uint8_t txs = m_maxNumbTx - (m_retxParams.retxLeft);
           if( m_retxParams.waitingAck)
-            {          
-             m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
-             NS_LOG_DEBUG ("Failure: no more retransmissions left for confirmed packet. Used " << unsigned(txs) << " transmissions.");              
+            {
+
+              m_requiredTxCallback (txs, false, m_retxParams.firstAttempt, m_retxParams.packet);
+              NS_LOG_DEBUG ("Failure: no more retransmissions left for confirmed packet. Used " << unsigned(txs) << " transmissions.");              
             }
           else if(m_retxParams.sendingMultipleUnconfirmed)
               NS_LOG_DEBUG ("Failure: no more retransmissions left for unconfirmed packet. Used " << unsigned(txs) << " transmissions.");
@@ -312,6 +313,7 @@ ClassAEndDeviceLorawanMac::FailedReception (Ptr<Packet const> packet, bool lostB
         }
     }
 }
+
 
 void
 ClassAEndDeviceLorawanMac::TxFinished (Ptr<const Packet> packet)

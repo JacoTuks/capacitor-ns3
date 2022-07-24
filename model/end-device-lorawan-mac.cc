@@ -886,7 +886,7 @@ EndDeviceLorawanMac::DoSend (Ptr<Packet> packet)
                                                   << duration.GetSeconds ());
                 NS_LOG_DEBUG (" idle 1 Voltage cost: " << idleVoltageCost1);
                 NS_LOG_DEBUG ("rx1 Voltage cost: " << rx1VoltageCost << " duration "
-                                                   << rx1duration);
+                                                   << rx1duration.GetSeconds ());
                 NS_LOG_DEBUG (" idle 2 Voltage cost: " << idleVoltageCost2);
                 NS_LOG_DEBUG ("rx2 Voltage cost: " << rx2VoltageCost << " duration "
                                                    << rx2duration.GetSeconds ());
